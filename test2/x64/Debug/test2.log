@@ -1,4 +1,2 @@
-﻿  main.cpp
-C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\test2\main.cpp(153,18): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
-C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\test2\main.cpp(276,46): warning C4267: 'argument': conversion from 'size_t' to 'GLsizei', possible loss of data
+﻿     Creating library C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.lib and object C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.exp
   test2.vcxproj -> C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.exe

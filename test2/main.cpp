@@ -9,8 +9,8 @@ using namespace std;
 #include <SDL.h>
 
 #include <labhelper.h>
-//#include <imgui.h>
-//#include <perf.h>
+#include <imgui.h>
+#include <perf.h>
 
 #include <math.h>
 
@@ -26,7 +26,7 @@ float smoothRadius = 0.3f;
 float targetDensity = 2.5f;
 float pressureMultiplier = 0.5f;
 
-int n_particles = 500;
+int n_particles = 1000;
 
 // Particles
 
@@ -44,7 +44,7 @@ int windowHeight = 600;
 float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
-
+float simulationMs = 0.0f;
 
 
 
@@ -64,7 +64,7 @@ GLuint shaderProgram = 0;
 
 void initSimpleStuff()
 {
-    
+
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -117,11 +117,12 @@ void initSimpleStuff()
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(0);
+    
 }
 void initialize()
 {
     g_window = labhelper::init_window_SDL("Bouncing Balls", windowWidth, windowHeight);
-
+    SDL_GL_SetSwapInterval(0); // disable vsync
     glDisable(GL_DEPTH_TEST);
 
     initSimpleStuff();
@@ -129,7 +130,7 @@ void initialize()
     // Create some balls
     for (int i = 0; i < n_particles; i++)
     {
-        
+
         positions[i] = vec2(
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f,
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f
@@ -141,7 +142,7 @@ void initialize()
         );*/
         velocities[i] = vec2(0.0f, 0.0f);
 
-        
+
     }
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_BLEND);
@@ -168,7 +169,7 @@ float kernelDerivative(float radius, float dist)
 float calculateDensity(vec2 samplePoint)
 {
     float density = 0.0f;
-    
+
 
     for (int i = 0; i < n_particles; i++)
     {
@@ -176,7 +177,7 @@ float calculateDensity(vec2 samplePoint)
         float influence = kernel(smoothRadius, dist);
         density += mass * influence;
 
-        
+
     }
     return density;
 }
@@ -189,11 +190,11 @@ float densityToPressure(float density)
 
 void updateDensities()
 {
-    
+
     for (int i = 0; i < n_particles; i++)
     {
         float density = calculateDensity(positions[i]);
-        
+
         densities[i] = density;
         pressures[i] = densityToPressure(density);
     }
@@ -210,24 +211,24 @@ float sharedPressure(int iA, int iB)
 vec2 calculateDensityGradient(int idxBall)
 {
     vec2 gradient(0.0f, 0.0f);
-    
+
     for (int i = 0; i < n_particles; i++)
     {
-        if (i!=idxBall)
+        if (i != idxBall)
         {
             float dist = length(positions[i] - positions[idxBall]);
-        
+
             vec2 dir = (positions[i] - positions[idxBall]) / dist;
-            
+
             float slope = kernelDerivative(smoothRadius, dist);
             float density = densities[i];
 
             gradient += sharedPressure(i, idxBall) * dir * slope * mass / density; //force
             //cout << gradient.x << "\n";
         }
-        
+
     }
-    
+
     return gradient;
 }
 
@@ -241,7 +242,7 @@ void updateBalls()
 
         velocities[i] += gravity * deltaTime;
         velocities[i] += calculateDensityGradient(i) / densities[i] * deltaTime;
-        
+
         positions[i] += velocities[i] * deltaTime;
 
         // Bounce on edges (-1 to 1 in OpenGL)
@@ -259,9 +260,15 @@ void display()
     glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    updateBalls();
-
     
+
+    auto t0 = chrono::high_resolution_clock::now();
+    updateBalls();
+    auto t1 = chrono::high_resolution_clock::now();
+
+    simulationMs = chrono::duration<float, milli>(t1 - t0).count();
+
+
 
     // Upload to GPU
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -292,9 +299,23 @@ bool handleEvents()
             quit = true;
     }
 
-   
+
 
     return quit;
+}
+
+void gui()
+{
+    // ----------------- Set variables --------------------------
+    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
+        ImGui::GetIO().Framerate);
+    // ----------------------------------------------------------
+
+    ImGui::Text("Simulation: %.3f ms", simulationMs);
+    ////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////
+
+    labhelper::perf::drawEventsWindow();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -307,24 +328,29 @@ int main(int argc, char* argv[])
 
     while (!quit)
     {
-        // Time update
-        std::chrono::duration<float> t =
-            std::chrono::system_clock::now() - startTime;
-
+        //update currentTime
+        std::chrono::duration<float> timeSinceStart = std::chrono::system_clock::now() - startTime;
         previousTime = currentTime;
-        currentTime = t.count();
+        currentTime = timeSinceStart.count();
         deltaTime = currentTime - previousTime;
 
-        // Events
+        // check events (keyboard among other)
         quit = handleEvents();
 
-        // Render
-        display();
-        
+        // Inform imgui of new frame
+        labhelper::newFrame(g_window);
 
+        // render to window
+        display();
+
+        // Render overlay GUI.
+        gui();
+
+        // Finish the frame and render the GUI
+        labhelper::finishFrame();
+
+        // Swap front and back buffer. This frame will now been displayed.
         SDL_GL_SwapWindow(g_window);
-        //cout << calculateDensity(vec2(0.5f, 0.5f)) << "\n";
-        cout << deltaTime << "\n";
     }
 
     labhelper::shutDown(g_window);
