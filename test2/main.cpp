@@ -9,8 +9,8 @@ using namespace std;
 #include <SDL.h>
 
 #include <labhelper.h>
-#include <imgui.h>
-#include <perf.h>
+//#include <imgui.h>
+//#include <perf.h>
 
 #include <math.h>
 
@@ -20,13 +20,21 @@ using namespace glm;
 #include <chrono>
 #include <vector>
 
-struct Ball {
-    vec2 pos;
-    vec2 vel;
-};
+// Simulation constants
+float smoothRadius = 0.3f;
 
-std::vector<Ball> balls;
-std::vector<float> densities;
+float targetDensity = 2.5f;
+float pressureMultiplier = 0.5f;
+
+int n_particles = 500;
+
+// Particles
+
+
+std::vector<vec2> positions(n_particles);
+std::vector<vec2> velocities(n_particles);
+std::vector<float> densities(n_particles);
+std::vector<float> pressures(n_particles);
 // Window
 SDL_Window* g_window = nullptr;
 int windowWidth = 800;
@@ -37,21 +45,17 @@ float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
 
-// Simple "ball"
-vec2 ballPos(0.0f, 0.0f);
-float speed = 1.5f;
-const float mass = 1.0f;
+
+
 
 // Constants
 vec2 gravity(0.0f, -0.0f);
 float dampening = 0.8f;
+const float mass = 1.0f;
 
-// Simulation constants
-float smoothRadius = 0.3f;
+///////////////////////////////////////////////////////////////////////////////
 
-float targetDensity = 2.5f;
-float pressureMultiplier = 0.5f;
-
+//void updateSpacialLookup()
 
 ///////////////////////////////////////////////////////////////////////////////
 GLuint vao = 0;
@@ -60,12 +64,7 @@ GLuint shaderProgram = 0;
 
 void initSimpleStuff()
 {
-    // Triangle vertices (x, y)
-    float vertices[] = {
-        -0.2f, -0.2f,
-         0.2f, -0.2f,
-         0.0f,  0.2f
-    };
+    
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -121,17 +120,17 @@ void initSimpleStuff()
 }
 void initialize()
 {
-    g_window = labhelper::init_window_SDL("Bouncing Balls");
+    g_window = labhelper::init_window_SDL("Bouncing Balls", windowWidth, windowHeight);
 
     glDisable(GL_DEPTH_TEST);
 
     initSimpleStuff();
 
     // Create some balls
-    for (int i = 0; i < 1000; i++)
+    for (int i = 0; i < n_particles; i++)
     {
-        Ball b;
-        b.pos = vec2(
+        
+        positions[i] = vec2(
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f,
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f
         );
@@ -140,9 +139,9 @@ void initialize()
             (rand() / float(RAND_MAX)) * 0.5f - 0.25f,
             (rand() / float(RAND_MAX)) * 0.5f - 0.25f
         );*/
-        b.vel = vec2(0.0f, 0.0f);
+        velocities[i] = vec2(0.0f, 0.0f);
 
-        balls.push_back(b);
+        
     }
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_BLEND);
@@ -171,9 +170,9 @@ float calculateDensity(vec2 samplePoint)
     float density = 0.0f;
     
 
-    for (auto& b : balls)
+    for (int i = 0; i < n_particles; i++)
     {
-        float dist = length(b.pos - samplePoint);
+        float dist = length(positions[i] - samplePoint);
         float influence = kernel(smoothRadius, dist);
         density += mass * influence;
 
@@ -181,32 +180,30 @@ float calculateDensity(vec2 samplePoint)
     }
     return density;
 }
-
-void updateDensities()
-{
-    size_t n = balls.size();
-    densities.resize(n);
-    size_t i = 0;
-    for (auto& b : balls)
-    {
-        float density = calculateDensity(b.pos);
-        
-        densities[i] = density;
-        i++;
-    }
-}
-
 float densityToPressure(float density)
 {
     float densityError = density - targetDensity;
-    float pressure = densityError * pressureMultiplier;
+    float pressure = std::max(0.0f, densityError) * pressureMultiplier;
     return pressure;
 }
 
-float sharedPressure(float densityA, float densityB)
+void updateDensities()
 {
-    float pressureA = densityToPressure(densityA);
-    float pressureB = densityToPressure(densityB);
+    
+    for (int i = 0; i < n_particles; i++)
+    {
+        float density = calculateDensity(positions[i]);
+        
+        densities[i] = density;
+        pressures[i] = densityToPressure(density);
+    }
+}
+
+
+float sharedPressure(int iA, int iB)
+{
+    float pressureA = pressures[iA];
+    float pressureB = pressures[iB];
     return (pressureA + pressureB) / 2.0f;
 }
 
@@ -214,23 +211,21 @@ vec2 calculateDensityGradient(int idxBall)
 {
     vec2 gradient(0.0f, 0.0f);
     
-    size_t i = 0;
-    for (auto& b : balls)
+    for (int i = 0; i < n_particles; i++)
     {
-
-        float dist = length(b.pos - balls[idxBall].pos);
-        
-        if (dist > 0.0f)
+        if (i!=idxBall)
         {
-            vec2 dir = (b.pos - balls[idxBall].pos) / dist;
+            float dist = length(positions[i] - positions[idxBall]);
+        
+            vec2 dir = (positions[i] - positions[idxBall]) / dist;
             
             float slope = kernelDerivative(smoothRadius, dist);
             float density = densities[i];
 
-            gradient += sharedPressure(density, densities[idxBall]) * dir * slope * mass / density; //force
+            gradient += sharedPressure(i, idxBall) * dir * slope * mass / density; //force
             //cout << gradient.x << "\n";
         }
-
+        
     }
     
     return gradient;
@@ -241,22 +236,20 @@ vec2 calculateDensityGradient(int idxBall)
 void updateBalls()
 {
     updateDensities();
-    size_t i = 0;
-    for (auto& b : balls)
+    for (int i = 0; i < n_particles; i++)
     {
 
-        b.vel += gravity * deltaTime;
-        b.vel += calculateDensityGradient(i) / densities[i] * deltaTime;
+        velocities[i] += gravity * deltaTime;
+        velocities[i] += calculateDensityGradient(i) / densities[i] * deltaTime;
         
-        b.pos += b.vel * deltaTime;
+        positions[i] += velocities[i] * deltaTime;
 
         // Bounce on edges (-1 to 1 in OpenGL)
-        if (b.pos.x < -1.0f || b.pos.x > 1.0f)
-            b.vel.x *= -1.0f * dampening;
+        if (positions[i].x < -1.0f || positions[i].x > 1.0f)
+            velocities[i].x *= -1.0f * dampening;
 
-        if (b.pos.y < -1.0f || b.pos.y > 1.0f)
-            b.vel.y *= -1.0f * dampening;
-        i++;
+        if (positions[i].y < -1.0f || positions[i].y > 1.0f)
+            velocities[i].y *= -1.0f * dampening;
     }
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -268,10 +261,7 @@ void display()
 
     updateBalls();
 
-    // Collect positions
-    std::vector<vec2> positions;
-    for (auto& b : balls)
-        positions.push_back(b.pos);
+    
 
     // Upload to GPU
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -302,13 +292,7 @@ bool handleEvents()
             quit = true;
     }
 
-    // Keyboard input (continuous)
-    const uint8_t* state = SDL_GetKeyboardState(nullptr);
-
-    if (state[SDL_SCANCODE_W]) ballPos.y += speed * deltaTime;
-    if (state[SDL_SCANCODE_S]) ballPos.y -= speed * deltaTime;
-    if (state[SDL_SCANCODE_A]) ballPos.x -= speed * deltaTime;
-    if (state[SDL_SCANCODE_D]) ballPos.x += speed * deltaTime;
+   
 
     return quit;
 }
