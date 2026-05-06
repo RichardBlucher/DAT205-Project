@@ -20,11 +20,14 @@ using namespace glm;
 #include <chrono>
 #include <vector>
 
+#include <algorithm>
+#include <climits>
+
 // Simulation constants
 float smoothRadius = 0.3f;
 
 float targetDensity = 2.5f;
-float pressureMultiplier = 0.5f;
+float pressureMultiplier = 0.1f;
 
 int n_particles = 1000;
 
@@ -50,19 +53,125 @@ float simulationMs = 0.0f;
 
 // Constants
 vec2 gravity(0.0f, -0.0f);
-float dampening = 0.8f;
+float dampening = 1.0f;
 const float mass = 1.0f;
 
 ///////////////////////////////////////////////////////////////////////////////
+struct Entry
+{
+    int particleIndex;
+    unsigned int cellKey;
 
-//void updateSpacialLookup()
+    // for sorting by cellKey
+    bool operator<(const Entry& other) const
+    {
+        return cellKey < other.cellKey;
+    }
+};
+
+// Global containers
+const unsigned int TABLE_SIZE = 2 * n_particles;
+
+std::vector<Entry> spacialLookup(n_particles);
+std::vector<int> startIndices(TABLE_SIZE, INT_MAX);
+
+std::pair<int, int> PositionToCellCoord(const vec2& point, float radius) // maps positions to cells (radius should be approx interaction radius)
+{
+    int cellX = static_cast<int>(floor(point.x / radius));
+    int cellY = static_cast<int>(floor(point.y / radius));
+    return { cellX, cellY };
+}
+
+unsigned int HashCell(int cellX, int cellY) // turns cell coords to hash (large int)
+{
+    unsigned int a = (unsigned int)cellX * 15823u;
+    unsigned int b = (unsigned int)cellY * 9737333u;
+    return a + b;
+}
+
+unsigned int GetKeyFromHash(unsigned int hash) // hash to key (some hashes might have same key but worth it anyway)
+{
+    return hash % TABLE_SIZE;
+}
+
+void updateSpacialLookup(const std::vector<vec2>& points, float radius)
+{
+    std::fill(startIndices.begin(), startIndices.end(), INT_MAX); // reset
+
+    for (int i = 0; i < n_particles; i++)
+    {
+        auto [cellX, cellY] = PositionToCellCoord(points[i], radius);
+        unsigned int cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+
+        spacialLookup[i] = { i, cellKey }; // assignt each particle to a cell
+    }
+
+    std::sort(spacialLookup.begin(), spacialLookup.end()); // sort by cell key
+
+    for (int i = 0; i < n_particles; i++)
+    {
+        unsigned int key = spacialLookup[i].cellKey;
+        unsigned int prevKey = (i == 0) ? UINT_MAX : spacialLookup[i - 1].cellKey;
+
+        if (key != prevKey)
+        {
+            startIndices[key] = i; // sets start indices
+        }
+    }
+}
+
+std::vector<std::pair<int, int>> cellOffsets = {
+    {-1,-1}, {0,-1}, {1,-1},
+    {-1, 0}, {0, 0}, {1, 0},
+    {-1, 1}, {0, 1}, {1, 1}
+}; // needed for neighboring cells
+
+template<typename Func>
+void ForEachPointWithinRadius(const vec2& samplePoint, float radius, Func func)
+{
+    std::pair<int, int> centre = PositionToCellCoord(samplePoint, radius); // find centre cell
+    int centreX = centre.first;
+    int centreY = centre.second;
+
+    float sqrRadius = radius * radius;
+
+    for (const auto& offset : cellOffsets) // check centre and neighbors
+    {
+        int offsetX = offset.first;
+        int offsetY = offset.second;
+
+        unsigned int key = GetKeyFromHash(
+            HashCell(centreX + offsetX, centreY + offsetY)
+        );
+
+        int startIndex = startIndices[key];
+        if (startIndex == INT_MAX)
+            continue; // if INT_MAX, no particle in cell
+
+        for (int i = startIndex; i < spacialLookup.size(); i++)
+        {
+            if (spacialLookup[i].cellKey != key)
+                break; // iterate only paricles in this cell (if key changes, no longer same cell)
+
+            int particleIndex = spacialLookup[i].particleIndex;
+
+            vec2 diff = positions[particleIndex] - samplePoint;
+            float sqrDst = dot(diff, diff);
+
+            if (sqrDst <= sqrRadius) // distance check
+            {
+                func(particleIndex, sqrDst); // do whatever func() does (ex. calculate forces)
+            }
+        }
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 GLuint vao = 0;
 GLuint vbo = 0;
 GLuint shaderProgram = 0;
 
-void initSimpleStuff()
+void initShaderStuff()
 {
 
 
@@ -71,13 +180,13 @@ void initSimpleStuff()
 
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, 1000 * sizeof(vec2), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, n_particles * sizeof(vec2), nullptr, GL_DYNAMIC_DRAW);
 
     // Simple shader
     const char* vs = R"(
     #version 330 core
     layout(location = 0) in vec2 pos;
-
+    
     void main() {
         gl_Position = vec4(pos, 0.0, 1.0);
         gl_PointSize = 10.0;
@@ -117,15 +226,15 @@ void initSimpleStuff()
 
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glEnableVertexAttribArray(0);
-    
+
 }
 void initialize()
 {
-    g_window = labhelper::init_window_SDL("Bouncing Balls", windowWidth, windowHeight);
+    g_window = labhelper::init_window_SDL("SPH", windowWidth, windowHeight);
     SDL_GL_SetSwapInterval(0); // disable vsync
     glDisable(GL_DEPTH_TEST);
 
-    initSimpleStuff();
+    initShaderStuff();
 
     // Create some balls
     for (int i = 0; i < n_particles; i++)
@@ -162,23 +271,23 @@ float kernelDerivative(float radius, float dist)
     {
         return 0;
     }
-    return -3.0f * (radius - dist) * (radius - dist);
+    float volume = M_PI * radius * radius * radius * radius / 2.0f; // for normalisation
+    return -3.0f * (radius - dist) * (radius - dist) / volume;
 
 }
 
-float calculateDensity(vec2 samplePoint)
+float calculateDensity(const vec2& samplePoint)
 {
     float density = 0.0f;
 
+    ForEachPointWithinRadius(samplePoint, smoothRadius,
+        [&](int j, float sqrDst)
+        {
+            float dist = sqrt(sqrDst);
+            float influence = kernel(smoothRadius, dist);
+            density += mass * influence;
+        });
 
-    for (int i = 0; i < n_particles; i++)
-    {
-        float dist = length(positions[i] - samplePoint);
-        float influence = kernel(smoothRadius, dist);
-        density += mass * influence;
-
-
-    }
     return density;
 }
 float densityToPressure(float density)
@@ -208,49 +317,88 @@ float sharedPressure(int iA, int iB)
     return (pressureA + pressureB) / 2.0f;
 }
 
-vec2 calculateDensityGradient(int idxBall)
+vec2 calculatePressureForce(int i)
 {
-    vec2 gradient(0.0f, 0.0f);
+    vec2 force(0.0f);
 
-    for (int i = 0; i < n_particles; i++)
-    {
-        if (i != idxBall)
+    const vec2& pos_i = positions[i];
+
+    ForEachPointWithinRadius(pos_i, smoothRadius,
+        [&](int j, float sqrDst)
         {
-            float dist = length(positions[i] - positions[idxBall]);
+            if (j == i) return; // skip self
 
-            vec2 dir = (positions[i] - positions[idxBall]) / dist;
+            // Avoid sqrt unless needed
+            float dist = sqrt(sqrDst);
+            if (dist < 1e-6f) return;
+
+            vec2 dir = (positions[j] - pos_i) / dist;
 
             float slope = kernelDerivative(smoothRadius, dist);
-            float density = densities[i];
+            float density_j = densities[j];
 
-            gradient += sharedPressure(i, idxBall) * dir * slope * mass / density; //force
-            //cout << gradient.x << "\n";
-        }
+            force += sharedPressure(i, j) * dir * slope * mass / density_j;
+        });
 
-    }
-
-    return gradient;
+    return force;
 }
 
-
+//vec2 calculateViscosityForce(int i) 
+//{
+//    vec2 force(0.0f);
+//    const vec2& pos_i = positions[i];
+//
+//    ForEachPointWithinRadius(pos_i, smoothRadius,
+//        [&](int j, float sqrDst)
+//        {
+//            if (j == i) return;
+//
+//            float dist = sqrt(sqrDst);
+//            if (dist < 1e-6f) return;
+//
+//            vec2 velDiff = velocities[j] - velocities[i];
+//
+//            float influence = kernel(smoothRadius, dist);
+//
+//            force += velDiff * influence;
+//        });
+//
+//    float viscosityStrength = 0.1f; // tune this
+//    return viscosityStrength * force;
+//} // not sure i want to use this yet. Fixes some stuff but i think in the wrong way (numerical stability)
 
 void updateBalls()
 {
+    updateSpacialLookup(positions, smoothRadius);
     updateDensities();
     for (int i = 0; i < n_particles; i++)
     {
 
         velocities[i] += gravity * deltaTime;
-        velocities[i] += calculateDensityGradient(i) / densities[i] * deltaTime;
+        velocities[i] += calculatePressureForce(i) / densities[i] * deltaTime;
+        //velocities[i] += calculateViscosityForce(i) * deltaTime;
 
         positions[i] += velocities[i] * deltaTime;
 
         // Bounce on edges (-1 to 1 in OpenGL)
-        if (positions[i].x < -1.0f || positions[i].x > 1.0f)
-            velocities[i].x *= -1.0f * dampening;
+        if (positions[i].x < -1.0f) {
+            positions[i].x = -1.0f;
+            velocities[i].x *= -dampening;
+        }
+        if (positions[i].x > 1.0f) {
+            positions[i].x = 1.0f;
+            velocities[i].x *= -dampening;
+        }
+            
 
-        if (positions[i].y < -1.0f || positions[i].y > 1.0f)
-            velocities[i].y *= -1.0f * dampening;
+        if (positions[i].y < -1.0f) {
+            positions[i].y = -1.0f;
+            velocities[i].y *= -dampening;
+        }
+        if (positions[i].y > 1.0f) {
+            positions[i].y = 1.0f;
+            velocities[i].y *= -dampening;
+        }
     }
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -260,7 +408,7 @@ void display()
     glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    
+
 
     auto t0 = chrono::high_resolution_clock::now();
     updateBalls();

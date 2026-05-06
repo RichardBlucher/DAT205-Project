@@ -1,2 +1,3 @@
-﻿     Creating library C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.lib and object C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.exp
-  test2.vcxproj -> C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\test2.exe
+﻿C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(538,5): warning MSB8028: The intermediate directory (x64\Debug\) contains files shared from another project (test2.vcxproj).  This can lead to incorrect clean and rebuild behavior.
+     Creating library C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\SPH.lib and object C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\SPH.exp
+  test2.vcxproj -> C:\Users\richa\Documents\Skola\F4\DAT205\DAT205-Project\build\x64\Debug\SPH.exe
