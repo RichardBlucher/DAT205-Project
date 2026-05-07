@@ -55,9 +55,18 @@ float simulationMs = 0.0f;
 vec2 gravity(0.0f, -0.0f);
 float dampening = 1.0f;
 const float mass = 1.0f;
+float viscosityStrength = 0.0f;
 
 // Debug
 static bool paused = false;
+
+// For plots
+const int graphSize = 200;
+
+std::vector<float> avgDensityHistory(graphSize, 0.0f);
+std::vector<float> avgVelocityHistory(graphSize, 0.0f);
+
+int graphOffset = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 struct Entry
@@ -346,29 +355,49 @@ vec2 calculatePressureForce(int i)
     return force;
 }
 
-//vec2 calculateViscosityForce(int i) 
-//{
-//    vec2 force(0.0f);
-//    const vec2& pos_i = positions[i];
-//
-//    ForEachPointWithinRadius(pos_i, smoothRadius,
-//        [&](int j, float sqrDst)
-//        {
-//            if (j == i) return;
-//
-//            float dist = sqrt(sqrDst);
-//            if (dist < 1e-6f) return;
-//
-//            vec2 velDiff = velocities[j] - velocities[i];
-//
-//            float influence = kernel(smoothRadius, dist);
-//
-//            force += velDiff * influence;
-//        });
-//
-//    float viscosityStrength = 0.1f; // tune this
-//    return viscosityStrength * force;
-//} // not sure i want to use this yet. Fixes some stuff but i think in the wrong way (numerical stability)
+vec2 calculateViscosityForce(int i) 
+{
+    vec2 force(0.0f);
+    const vec2& pos_i = positions[i];
+
+    ForEachPointWithinRadius(pos_i, smoothRadius,
+        [&](int j, float sqrDst)
+        {
+            if (j == i) return;
+
+            float dist = sqrt(sqrDst);
+            if (dist < 1e-6f) return;
+
+            vec2 velDiff = velocities[j] - velocities[i];
+
+            float influence = kernel(smoothRadius, dist);
+
+            force += velDiff * influence;
+        });
+
+    
+    return viscosityStrength * force;
+} // not sure i want to use this yet. Fixes some stuff but i think in the wrong way (numerical stability)
+
+void updateStatistics()
+{
+    float avgDensity = 0.0f;
+    float avgVelocity = 0.0f;
+
+    for (int i = 0; i < n_particles; i++)
+    {
+        avgDensity += densities[i];
+        avgVelocity += length(velocities[i]);
+    }
+
+    avgDensity /= n_particles;
+    avgVelocity /= n_particles;
+
+    avgDensityHistory[graphOffset] = avgDensity;
+    avgVelocityHistory[graphOffset] = avgVelocity;
+
+    graphOffset = (graphOffset + 1) % graphSize;
+}
 
 void updateBalls()
 {
@@ -379,7 +408,7 @@ void updateBalls()
 
         velocities[i] += gravity * deltaTime;
         velocities[i] += calculatePressureForce(i) / densities[i] * deltaTime;
-        //velocities[i] += calculateViscosityForce(i) * deltaTime;
+        velocities[i] += calculateViscosityForce(i) * deltaTime;
 
         positions[i] += velocities[i] * deltaTime;
 
@@ -417,6 +446,7 @@ void display()
     if (!paused)
     {
         updateBalls();
+        updateStatistics();
     }
 
     auto t1 = chrono::high_resolution_clock::now();
@@ -476,7 +506,7 @@ void gui()
         ImGui::SliderFloat2("Gravity", &gravity.x, -1.0f, 1.0f);
 
         // density / pressure
-        ImGui::SliderFloat("Target Density", &targetDensity, 0.1f, 10.0f);
+        ImGui::SliderFloat("Target Density", &targetDensity, 0.1f, 20.0f);
         ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 0.0f, 5.0f);
 
         // kernel radius
@@ -484,6 +514,9 @@ void gui()
 
         // damping
         ImGui::SliderFloat("Dampening", &dampening, 0.0f, 1.0f);
+
+        // damping
+        ImGui::SliderFloat("Viscosity", &viscosityStrength, 0.0f, 1.0f);
     }
 
     // Debug
@@ -505,6 +538,41 @@ void gui()
     {
         updateBalls();
     }
+
+    // plotting 
+    ImGui::Separator();
+    ImGui::Text("Simulation Statistics");
+
+    float currentDensity =
+        avgDensityHistory[(graphOffset - 1 + graphSize) % graphSize];
+
+    float currentVelocity =
+        avgVelocityHistory[(graphOffset - 1 + graphSize) % graphSize];
+
+    ImGui::Text("Avg Density: %.3f", currentDensity);
+    ImGui::Text("Avg Velocity: %.3f", currentVelocity);
+
+    ImGui::PlotLines(
+        "Average Density",
+        avgDensityHistory.data(),
+        graphSize,
+        graphOffset,
+        nullptr,
+        0.0f,
+        targetDensity * 2.0f,
+        ImVec2(0, 80)
+    );
+
+    ImGui::PlotLines(
+        "Average Velocity",
+        avgVelocityHistory.data(),
+        graphSize,
+        graphOffset,
+        nullptr,
+        0.0f,
+        5.0f,
+        ImVec2(0, 80)
+    );
 
     labhelper::perf::drawEventsWindow();
 }
