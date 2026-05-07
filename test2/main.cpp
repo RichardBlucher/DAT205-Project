@@ -56,6 +56,9 @@ vec2 gravity(0.0f, -0.0f);
 float dampening = 1.0f;
 const float mass = 1.0f;
 
+// Debug
+static bool paused = false;
+
 ///////////////////////////////////////////////////////////////////////////////
 struct Entry
 {
@@ -411,7 +414,11 @@ void display()
 
 
     auto t0 = chrono::high_resolution_clock::now();
-    updateBalls();
+    if (!paused)
+    {
+        updateBalls();
+    }
+
     auto t1 = chrono::high_resolution_clock::now();
 
     simulationMs = chrono::duration<float, milli>(t1 - t0).count();
@@ -462,6 +469,42 @@ void gui()
     ImGui::Text("Simulation: %.3f ms", simulationMs);
     ////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////
+
+    if (ImGui::CollapsingHeader("Physics"))
+    {
+        // gravity
+        ImGui::SliderFloat2("Gravity", &gravity.x, -1.0f, 1.0f);
+
+        // density / pressure
+        ImGui::SliderFloat("Target Density", &targetDensity, 0.1f, 10.0f);
+        ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 0.0f, 5.0f);
+
+        // kernel radius
+        ImGui::SliderFloat("Smooth Radius", &smoothRadius, 0.05f, 1.0f);
+
+        // damping
+        ImGui::SliderFloat("Dampening", &dampening, 0.0f, 1.0f);
+    }
+
+    // Debug
+    if (ImGui::Button("Reset Simulation"))
+    {
+        for (int i = 0; i < n_particles; i++)
+        {
+            positions[i] = vec2(
+                (rand() / float(RAND_MAX)) * 2.0f - 1.0f,
+                (rand() / float(RAND_MAX)) * 2.0f - 1.0f
+            );
+            velocities[i] = vec2(0.0f);
+        }
+    }
+
+    ImGui::Checkbox("Pause", &paused);
+
+    if (paused && ImGui::Button("Step"))
+    {
+        updateBalls();
+    }
 
     labhelper::perf::drawEventsWindow();
 }
