@@ -24,9 +24,9 @@ using namespace glm;
 #include <climits>
 
 // Simulation constants
-float smoothRadius = 0.3f;
+float smoothRadius = 0.15f;
 
-float targetDensity = 2.5f;
+float targetDensity = 6.5f;
 float pressureMultiplier = 0.1f;
 
 int n_particles = 1000;
@@ -38,6 +38,9 @@ std::vector<vec2> positions(n_particles);
 std::vector<vec2> velocities(n_particles);
 std::vector<float> densities(n_particles);
 std::vector<float> pressures(n_particles);
+
+std::vector<vec2> predictedPositions(n_particles);
+float predictionFactor = 2.0f;
 // Window
 SDL_Window* g_window = nullptr;
 int windowWidth = 800;
@@ -55,7 +58,7 @@ float simulationMs = 0.0f;
 vec2 gravity(0.0f, -0.0f);
 float dampening = 1.0f;
 const float mass = 1.0f;
-float viscosityStrength = 0.0f;
+float viscosityStrength = 0.1f;
 
 // Debug
 static bool paused = false;
@@ -139,7 +142,7 @@ std::vector<std::pair<int, int>> cellOffsets = {
 }; // needed for neighboring cells
 
 template<typename Func>
-void ForEachPointWithinRadius(const vec2& samplePoint, float radius, Func func)
+void ForEachPointWithinRadius(const vec2& samplePoint, const std::vector<vec2>& pointSet, float radius, Func func)
 {
     std::pair<int, int> centre = PositionToCellCoord(samplePoint, radius); // find centre cell
     int centreX = centre.first;
@@ -167,7 +170,7 @@ void ForEachPointWithinRadius(const vec2& samplePoint, float radius, Func func)
 
             int particleIndex = spacialLookup[i].particleIndex;
 
-            vec2 diff = positions[particleIndex] - samplePoint;
+            vec2 diff = pointSet[particleIndex] - samplePoint;
             float sqrDst = dot(diff, diff);
 
             if (sqrDst <= sqrRadius) // distance check
@@ -288,11 +291,11 @@ float kernelDerivative(float radius, float dist)
 
 }
 
-float calculateDensity(const vec2& samplePoint)
+float calculateDensity(const vec2& samplePoint, const std::vector<vec2>& pointSet)
 {
     float density = 0.0f;
 
-    ForEachPointWithinRadius(samplePoint, smoothRadius,
+    ForEachPointWithinRadius(samplePoint, predictedPositions, smoothRadius,
         [&](int j, float sqrDst)
         {
             float dist = sqrt(sqrDst);
@@ -314,7 +317,7 @@ void updateDensities()
 
     for (int i = 0; i < n_particles; i++)
     {
-        float density = calculateDensity(positions[i]);
+        float density = calculateDensity(positions[i], predictedPositions);
 
         densities[i] = density;
         pressures[i] = densityToPressure(density);
@@ -333,9 +336,9 @@ vec2 calculatePressureForce(int i)
 {
     vec2 force(0.0f);
 
-    const vec2& pos_i = positions[i];
+    const vec2& pos_i = predictedPositions[i];
 
-    ForEachPointWithinRadius(pos_i, smoothRadius,
+    ForEachPointWithinRadius(pos_i, predictedPositions, smoothRadius,
         [&](int j, float sqrDst)
         {
             if (j == i) return; // skip self
@@ -344,7 +347,7 @@ vec2 calculatePressureForce(int i)
             float dist = sqrt(sqrDst);
             if (dist < 1e-6f) return;
 
-            vec2 dir = (positions[j] - pos_i) / dist;
+            vec2 dir = (predictedPositions[j] - pos_i) / dist;
 
             float slope = kernelDerivative(smoothRadius, dist);
             float density_j = densities[j];
@@ -358,9 +361,9 @@ vec2 calculatePressureForce(int i)
 vec2 calculateViscosityForce(int i) 
 {
     vec2 force(0.0f);
-    const vec2& pos_i = positions[i];
+    const vec2& pos_i = predictedPositions[i];
 
-    ForEachPointWithinRadius(pos_i, smoothRadius,
+    ForEachPointWithinRadius(pos_i, predictedPositions, smoothRadius,
         [&](int j, float sqrDst)
         {
             if (j == i) return;
@@ -401,7 +404,12 @@ void updateStatistics()
 
 void updateBalls()
 {
-    updateSpacialLookup(positions, smoothRadius);
+    for (int i = 0; i < n_particles; i++)
+    {
+        predictedPositions[i] =
+            positions[i] + velocities[i] * deltaTime * predictionFactor;
+    }
+    updateSpacialLookup(predictedPositions, smoothRadius);
     updateDensities();
     for (int i = 0; i < n_particles; i++)
     {
@@ -517,6 +525,9 @@ void gui()
 
         // damping
         ImGui::SliderFloat("Viscosity", &viscosityStrength, 0.0f, 1.0f);
+
+        // prediction factor for positions
+        ImGui::SliderFloat("Prediction Factor", &predictionFactor, 0.0f, 10.0f);
     }
 
     // Debug
