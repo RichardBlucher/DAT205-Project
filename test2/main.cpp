@@ -40,7 +40,7 @@ std::vector<float> densities(n_particles);
 std::vector<float> pressures(n_particles);
 
 std::vector<vec2> predictedPositions(n_particles);
-float predictionFactor = 2.0f;
+float predictionFactor = 1.0f;
 // Window
 SDL_Window* g_window = nullptr;
 int windowWidth = 800;
@@ -70,6 +70,14 @@ std::vector<float> avgDensityHistory(graphSize, 0.0f);
 std::vector<float> avgVelocityHistory(graphSize, 0.0f);
 
 int graphOffset = 0;
+
+// Mouse interactions
+vec2 mousePos(0.0f);
+
+bool mouseDown = false;
+
+float mouseForceRadius = 0.3f;
+float mouseForceStrength = 5.0f;
 
 ///////////////////////////////////////////////////////////////////////////////
 struct Entry
@@ -295,7 +303,7 @@ float calculateDensity(const vec2& samplePoint, const std::vector<vec2>& pointSe
 {
     float density = 0.0f;
 
-    ForEachPointWithinRadius(samplePoint, predictedPositions, smoothRadius,
+    ForEachPointWithinRadius(samplePoint, pointSet, smoothRadius,
         [&](int j, float sqrDst)
         {
             float dist = sqrt(sqrDst);
@@ -308,7 +316,7 @@ float calculateDensity(const vec2& samplePoint, const std::vector<vec2>& pointSe
 float densityToPressure(float density)
 {
     float densityError = density - targetDensity;
-    float pressure = std::max(0.0f, densityError) * pressureMultiplier;
+    float pressure = std::max(0.0f, densityError) * pressureMultiplier; // maybe not clamp at 0?
     return pressure;
 }
 
@@ -380,7 +388,28 @@ vec2 calculateViscosityForce(int i)
 
     
     return viscosityStrength * force;
-} // not sure i want to use this yet. Fixes some stuff but i think in the wrong way (numerical stability)
+} 
+
+vec2 calculateMouseForce(int i)
+{
+    if (!mouseDown)
+        return vec2(0.0f);
+
+    vec2 offset = mousePos - predictedPositions[i];
+
+    float dist = length(offset);
+
+    if (dist > mouseForceRadius || dist < 1e-5f)
+        return vec2(0.0f);
+
+    vec2 dir = offset / dist;
+
+    // Smooth falloff
+    float strength =
+        1.0f - dist / mouseForceRadius;
+
+    return dir * strength * mouseForceStrength;
+}
 
 void updateStatistics()
 {
@@ -417,6 +446,7 @@ void updateBalls()
         velocities[i] += gravity * deltaTime;
         velocities[i] += calculatePressureForce(i) / densities[i] * deltaTime;
         velocities[i] += calculateViscosityForce(i) * deltaTime;
+        velocities[i] += calculateMouseForce(i) * deltaTime;
 
         positions[i] += velocities[i] * deltaTime;
 
@@ -490,9 +520,26 @@ bool handleEvents()
 
         if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)
             quit = true;
+        if (event.type == SDL_MOUSEBUTTONDOWN)
+        {
+            if (event.button.button == SDL_BUTTON_LEFT)
+                mouseDown = true;
+        }
+
+        if (event.type == SDL_MOUSEBUTTONUP)
+        {
+            if (event.button.button == SDL_BUTTON_LEFT)
+                mouseDown = false;
+        }
     }
 
+    
 
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    // convet to OpenGL coords
+    mousePos.x = (mx / float(windowWidth)) * 2.0f - 1.0f;
+    mousePos.y = 1.0f - (my / float(windowHeight)) * 2.0f;
 
     return quit;
 }
@@ -528,6 +575,12 @@ void gui()
 
         // prediction factor for positions
         ImGui::SliderFloat("Prediction Factor", &predictionFactor, 0.0f, 10.0f);
+    }
+    if (ImGui::CollapsingHeader("Mouse Force"))
+    {
+        ImGui::SliderFloat("Strength", &mouseForceStrength, 0.0f, 10.0f);
+
+        ImGui::SliderFloat("Radius", &mouseForceRadius, 0.0f, 1.0f);
     }
 
     // Debug
