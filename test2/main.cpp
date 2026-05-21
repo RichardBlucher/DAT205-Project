@@ -77,7 +77,7 @@ vec2 mousePos(0.0f);
 bool mouseDown = false;
 
 float mouseForceRadius = 0.3f;
-float mouseForceStrength = 5.0f;
+float mouseForceStrength = 2.0f;
 
 ///////////////////////////////////////////////////////////////////////////////
 struct Entry
@@ -316,7 +316,7 @@ float calculateDensity(const vec2& samplePoint, const std::vector<vec2>& pointSe
 float densityToPressure(float density)
 {
     float densityError = density - targetDensity;
-    float pressure = std::max(0.0f, densityError) * pressureMultiplier; // maybe not clamp at 0?
+    float pressure = densityError * pressureMultiplier;//std::max(0.0f, densityError) * pressureMultiplier; // maybe not clamp at 0?
     return pressure;
 }
 
@@ -444,7 +444,7 @@ void updateBalls()
     {
 
         velocities[i] += gravity * deltaTime;
-        velocities[i] += calculatePressureForce(i) / densities[i] * deltaTime;
+        velocities[i] += calculatePressureForce(i) / std::max(densities[i], 0.0001f) * deltaTime;
         velocities[i] += calculateViscosityForce(i) * deltaTime;
         velocities[i] += calculateMouseForce(i) * deltaTime;
 
@@ -578,7 +578,7 @@ void gui()
     }
     if (ImGui::CollapsingHeader("Mouse Force"))
     {
-        ImGui::SliderFloat("Strength", &mouseForceStrength, 0.0f, 10.0f);
+        ImGui::SliderFloat("Strength", &mouseForceStrength, -5.0f, 5.0f);
 
         ImGui::SliderFloat("Radius", &mouseForceRadius, 0.0f, 1.0f);
     }
@@ -623,7 +623,7 @@ void gui()
         graphOffset,
         nullptr,
         0.0f,
-        targetDensity * 2.0f,
+        targetDensity * 5.0f,
         ImVec2(0, 80)
     );
 
@@ -656,6 +656,7 @@ int main(int argc, char* argv[])
         previousTime = currentTime;
         currentTime = timeSinceStart.count();
         deltaTime = currentTime - previousTime;
+        deltaTime = std::min(deltaTime, 0.01f); // just for not breaking the simulation if it gets slow
 
         // check events (keyboard among other)
         quit = handleEvents();
