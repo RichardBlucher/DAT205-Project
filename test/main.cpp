@@ -29,15 +29,21 @@ float smoothRadius = 0.15f;
 float targetDensity = 6.5f;
 float pressureMultiplier = 0.1f;
 
-int n_particles = 1000;
+int n_particles = 10000;
 
 // Particles
+struct Particle
+{
+    vec2 position;
+    vec2 velocity;
+};
 
+std::vector<Particle> particles(n_particles);
 
 std::vector<vec2> positions(n_particles);
 std::vector<vec2> velocities(n_particles);
-std::vector<float> densities(n_particles);
-std::vector<float> pressures(n_particles);
+//std::vector<float> densities(n_particles);
+//std::vector<float> pressures(n_particles);
 
 std::vector<vec2> predictedPositions(n_particles);
 float predictionFactor = 1.0f;
@@ -87,7 +93,11 @@ float mouseForceStrength = 2.0f;
 GLuint computeProgram = 0;
 
 GLuint particleBuffer;
-GLuint velSSBO;
+//GLuint velSSBO;
+
+
+GLuint densityBuffer;
+GLuint pressureBuffer;
 
 std::string loadFile(const char* path)
 {
@@ -154,10 +164,29 @@ void runComputeShader()
 {
     glUseProgram(computeProgram);
 
+    // variables sent to compute shader
     GLint dtLoc =
         glGetUniformLocation(computeProgram, "dt");
 
     glUniform1f(dtLoc, deltaTime);
+
+    GLint countLoc = glGetUniformLocation(computeProgram, "particleCount");
+    glUniform1ui(countLoc, n_particles);
+
+    GLint gravityLoc = glGetUniformLocation(computeProgram, "gravity");
+    glUniform2f(gravityLoc, gravity.x, gravity.y);
+
+    GLint mousePosLoc = glGetUniformLocation(computeProgram, "mousePos");
+    glUniform2f(mousePosLoc, mousePos.x, mousePos.y);
+    
+    GLint mouseForceRadiusLoc = glGetUniformLocation(computeProgram, "mouseForceRadius");
+    glUniform1f(mouseForceRadiusLoc, mouseForceRadius);
+
+    GLint mouseForceStrengthLoc = glGetUniformLocation(computeProgram, "mouseForceStrength");
+    glUniform1f(mouseForceStrengthLoc, mouseForceStrength);
+    
+    GLint mouseDownLoc = glGetUniformLocation(computeProgram, "mouseDown");
+    glUniform1ui(mouseDownLoc, mouseDown);
 
     glDispatchCompute(
         (n_particles + 255) / 256,
@@ -172,114 +201,7 @@ void runComputeShader()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-struct Entry
-{
-    int particleIndex;
-    unsigned int cellKey;
 
-    // for sorting by cellKey
-    bool operator<(const Entry& other) const
-    {
-        return cellKey < other.cellKey;
-    }
-};
-
-// Global containers
-const unsigned int TABLE_SIZE = 2 * n_particles;
-
-std::vector<Entry> spacialLookup(n_particles);
-std::vector<int> startIndices(TABLE_SIZE, INT_MAX);
-
-std::pair<int, int> PositionToCellCoord(const vec2& point, float radius) // maps positions to cells (radius should be approx interaction radius)
-{
-    int cellX = static_cast<int>(floor(point.x / radius));
-    int cellY = static_cast<int>(floor(point.y / radius));
-    return { cellX, cellY };
-}
-
-unsigned int HashCell(int cellX, int cellY) // turns cell coords to hash (large int)
-{
-    unsigned int a = (unsigned int)cellX * 15823u;
-    unsigned int b = (unsigned int)cellY * 9737333u;
-    return a + b;
-}
-
-unsigned int GetKeyFromHash(unsigned int hash) // hash to key (some hashes might have same key but worth it anyway)
-{
-    return hash % TABLE_SIZE;
-}
-
-void updateSpacialLookup(const std::vector<vec2>& points, float radius)
-{
-    std::fill(startIndices.begin(), startIndices.end(), INT_MAX); // reset
-
-    for (int i = 0; i < n_particles; i++)
-    {
-        auto [cellX, cellY] = PositionToCellCoord(points[i], radius);
-        unsigned int cellKey = GetKeyFromHash(HashCell(cellX, cellY));
-
-        spacialLookup[i] = { i, cellKey }; // assignt each particle to a cell
-    }
-
-    std::sort(spacialLookup.begin(), spacialLookup.end()); // sort by cell key
-
-    for (int i = 0; i < n_particles; i++)
-    {
-        unsigned int key = spacialLookup[i].cellKey;
-        unsigned int prevKey = (i == 0) ? UINT_MAX : spacialLookup[i - 1].cellKey;
-
-        if (key != prevKey)
-        {
-            startIndices[key] = i; // sets start indices
-        }
-    }
-}
-
-std::vector<std::pair<int, int>> cellOffsets = {
-    {-1,-1}, {0,-1}, {1,-1},
-    {-1, 0}, {0, 0}, {1, 0},
-    {-1, 1}, {0, 1}, {1, 1}
-}; // needed for neighboring cells
-
-template<typename Func>
-void ForEachPointWithinRadius(const vec2& samplePoint, const std::vector<vec2>& pointSet, float radius, Func func)
-{
-    std::pair<int, int> centre = PositionToCellCoord(samplePoint, radius); // find centre cell
-    int centreX = centre.first;
-    int centreY = centre.second;
-
-    float sqrRadius = radius * radius;
-
-    for (const auto& offset : cellOffsets) // check centre and neighbors
-    {
-        int offsetX = offset.first;
-        int offsetY = offset.second;
-
-        unsigned int key = GetKeyFromHash(
-            HashCell(centreX + offsetX, centreY + offsetY)
-        );
-
-        int startIndex = startIndices[key];
-        if (startIndex == INT_MAX)
-            continue; // if INT_MAX, no particle in cell
-
-        for (int i = startIndex; i < spacialLookup.size(); i++)
-        {
-            if (spacialLookup[i].cellKey != key)
-                break; // iterate only paricles in this cell (if key changes, no longer same cell)
-
-            int particleIndex = spacialLookup[i].particleIndex;
-
-            vec2 diff = pointSet[particleIndex] - samplePoint;
-            float sqrDst = dot(diff, diff);
-
-            if (sqrDst <= sqrRadius) // distance check
-            {
-                func(particleIndex, sqrDst); // do whatever func() does (ex. calculate forces)
-            }
-        }
-    }
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 GLuint vao = 0;
@@ -301,7 +223,7 @@ void initShaderStuff()
     
     void main() {
         gl_Position = vec4(pos, 0.0, 1.0);
-        gl_PointSize = 10.0;
+        gl_PointSize = 3.0;
     }
 )";
 
@@ -319,7 +241,7 @@ void initShaderStuff()
         if(dist > 1.0)
             discard; // outside circle
 
-        color = vec4(1.0, 1.0, 1.0, alpha);
+        color = vec4(1.0, 1.0, 1.0, 1.0);
     }
 )";
 
@@ -336,7 +258,14 @@ void initShaderStuff()
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
 
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glVertexAttribPointer(
+        0,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(Particle),
+        (void*)0
+    );
     glEnableVertexAttribArray(0);
 
 }
@@ -364,16 +293,16 @@ void initialize()
     for (int i = 0; i < n_particles; i++)
     {
 
-        positions[i] = vec2(
+        particles[i].position = vec2(
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f,
             (rand() / float(RAND_MAX)) * 2.0f - 1.0f
         );
 
-        /*b.vel = vec2(
+        /*particles[i].velocity = vec2(
             (rand() / float(RAND_MAX)) * 0.5f - 0.25f,
             (rand() / float(RAND_MAX)) * 0.5f - 0.25f
         );*/
-        velocities[i] = vec2(0.0f, 0.0f);
+        particles[i].velocity = vec2(0.0f, 0.0f);
 
 
     }
@@ -385,15 +314,15 @@ void initialize()
     computeProgram =
         createComputeShader("integrate.comp");
 
-    // Positions
+    // Particles
     glGenBuffers(1, &particleBuffer);
 
     glBindBuffer(GL_ARRAY_BUFFER, particleBuffer);
 
     glBufferData(
         GL_ARRAY_BUFFER,
-        positions.size() * sizeof(vec2),
-        positions.data(),
+        particles.size() * sizeof(Particle),
+        particles.data(),
         GL_DYNAMIC_DRAW
     );
 
@@ -404,14 +333,14 @@ void initialize()
     ); // comute shader writes directly to render buffer
 
     // Velocities
-    glGenBuffers(1, &velSSBO);
+    /*glGenBuffers(1, &velSSBO);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSBO);
 
     glBufferData(
         GL_SHADER_STORAGE_BUFFER,
-        velocities.size() * sizeof(vec2),
-        velocities.data(),
+        particles.size() * sizeof(Particle),
+        particles.data(),
         GL_DYNAMIC_DRAW
     );
 
@@ -419,7 +348,29 @@ void initialize()
         GL_SHADER_STORAGE_BUFFER,
         1,
         velSSBO
+    );*/
+
+    // Densities
+    std::vector<float> densities(n_particles, 0.0f);
+
+    glGenBuffers(1, &densityBuffer);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, densityBuffer);
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        densities.size() * sizeof(float),
+        densities.data(),
+        GL_DYNAMIC_DRAW
     );
+
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER,
+        1,
+        densityBuffer
+    );
+
+    // Pressure
 
     initShaderStuff();
 }
@@ -442,20 +393,7 @@ float kernelDerivative(float radius, float dist)
 
 }
 
-float calculateDensity(const vec2& samplePoint, const std::vector<vec2>& pointSet)
-{
-    float density = 0.0f;
 
-    ForEachPointWithinRadius(samplePoint, pointSet, smoothRadius,
-        [&](int j, float sqrDst)
-        {
-            float dist = sqrt(sqrDst);
-            float influence = kernel(smoothRadius, dist);
-            density += mass * influence;
-        });
-
-    return density;
-}
 float densityToPressure(float density)
 {
     float densityError = density - targetDensity;
@@ -463,75 +401,14 @@ float densityToPressure(float density)
     return pressure;
 }
 
-void updateDensities()
-{
-
-    for (int i = 0; i < n_particles; i++)
-    {
-        float density = calculateDensity(positions[i], predictedPositions);
-
-        densities[i] = density;
-        pressures[i] = densityToPressure(density);
-    }
-}
 
 
-float sharedPressure(int iA, int iB)
-{
-    float pressureA = pressures[iA];
-    float pressureB = pressures[iB];
-    return (pressureA + pressureB) / 2.0f;
-}
-
-vec2 calculatePressureForce(int i)
-{
-    vec2 force(0.0f);
-
-    const vec2& pos_i = predictedPositions[i];
-
-    ForEachPointWithinRadius(pos_i, predictedPositions, smoothRadius,
-        [&](int j, float sqrDst)
-        {
-            if (j == i) return; // skip self
-
-            // Avoid sqrt unless needed
-            float dist = sqrt(sqrDst);
-            if (dist < 1e-6f) return;
-
-            vec2 dir = (predictedPositions[j] - pos_i) / dist;
-
-            float slope = kernelDerivative(smoothRadius, dist);
-            float density_j = densities[j];
-
-            force += sharedPressure(i, j) * dir * slope * mass / density_j;
-        });
-
-    return force;
-}
-
-vec2 calculateViscosityForce(int i)
-{
-    vec2 force(0.0f);
-    const vec2& pos_i = predictedPositions[i];
-
-    ForEachPointWithinRadius(pos_i, predictedPositions, smoothRadius,
-        [&](int j, float sqrDst)
-        {
-            if (j == i) return;
-
-            float dist = sqrt(sqrDst);
-            if (dist < 1e-6f) return;
-
-            vec2 velDiff = velocities[j] - velocities[i];
-
-            float influence = kernel(smoothRadius, dist);
-
-            force += velDiff * influence;
-        });
 
 
-    return viscosityStrength * force;
-}
+
+
+
+
 
 vec2 calculateMouseForce(int i)
 {
@@ -554,66 +431,9 @@ vec2 calculateMouseForce(int i)
     return dir * strength * mouseForceStrength;
 }
 
-void updateStatistics()
-{
-    float avgDensity = 0.0f;
-    float avgVelocity = 0.0f;
-
-    for (int i = 0; i < n_particles; i++)
-    {
-        avgDensity += densities[i];
-        avgVelocity += length(velocities[i]);
-    }
-
-    avgDensity /= n_particles;
-    avgVelocity /= n_particles;
-
-    avgDensityHistory[graphOffset] = avgDensity;
-    avgVelocityHistory[graphOffset] = avgVelocity;
-
-    graphOffset = (graphOffset + 1) % graphSize;
-}
-
-void updateBalls()
-{
-    for (int i = 0; i < n_particles; i++)
-    {
-        predictedPositions[i] =
-            positions[i] + velocities[i] * deltaTime * predictionFactor;
-    }
-    updateSpacialLookup(predictedPositions, smoothRadius);
-    updateDensities();
-    for (int i = 0; i < n_particles; i++)
-    {
-
-        velocities[i] += gravity * deltaTime;
-        velocities[i] += calculatePressureForce(i) / std::max(densities[i], 0.0001f) * deltaTime;
-        velocities[i] += calculateViscosityForce(i) * deltaTime;
-        velocities[i] += calculateMouseForce(i) * deltaTime;
-
-        positions[i] += velocities[i] * deltaTime;
-
-        // Bounce on edges (-1 to 1 in OpenGL)
-        if (positions[i].x < -1.0f) {
-            positions[i].x = -1.0f;
-            velocities[i].x *= -dampening;
-        }
-        if (positions[i].x > 1.0f) {
-            positions[i].x = 1.0f;
-            velocities[i].x *= -dampening;
-        }
 
 
-        if (positions[i].y < -1.0f) {
-            positions[i].y = -1.0f;
-            velocities[i].y *= -dampening;
-        }
-        if (positions[i].y > 1.0f) {
-            positions[i].y = 1.0f;
-            velocities[i].y *= -dampening;
-        }
-    }
-}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void display()
@@ -626,10 +446,10 @@ void display()
     auto t0 = chrono::high_resolution_clock::now();
     if (!paused)
     {
-        //updateBalls();
+        
         runComputeShader();
         
-        updateStatistics();
+        
     }
 
 
@@ -746,10 +566,10 @@ void gui()
 
     ImGui::Checkbox("Pause", &paused);
 
-    if (paused && ImGui::Button("Step"))
+    /*if (paused && ImGui::Button("Step"))
     {
         updateBalls();
-    }
+    }*/
 
     // plotting 
     ImGui::Separator();
@@ -814,6 +634,7 @@ int main(int argc, char* argv[])
 
         // render to window
         display();
+        //std::cout << particles[10].velocity.x << std::endl;
 
         // Render overlay GUI.
         gui();

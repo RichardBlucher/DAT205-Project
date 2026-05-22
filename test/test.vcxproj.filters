@@ -23,5 +23,8 @@
     <None Include="integrate.comp">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="density.comp">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
