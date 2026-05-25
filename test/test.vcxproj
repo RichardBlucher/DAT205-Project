@@ -143,7 +143,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="density.comp" />
-    <None Include="integrate.comp" />
+    <None Include="forces.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

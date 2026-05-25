@@ -27,7 +27,7 @@ using namespace glm;
 float smoothRadius = 0.15f;
 
 float targetDensity = 6.5f;
-float pressureMultiplier = 0.1f;
+float pressureMultiplier = 0.0f;
 
 int n_particles = 10000;
 
@@ -83,19 +83,19 @@ vec2 mousePos(0.0f);
 bool mouseDown = false;
 
 float mouseForceRadius = 0.3f;
-float mouseForceStrength = 2.0f;
+float mouseForceStrength = 0.0f;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Compute shader stuff
 #include <fstream>
 #include <sstream>
 
-GLuint computeProgram = 0;
+GLuint forcesProgram = 0;
 
 GLuint particleBuffer;
 //GLuint velSSBO;
 
-
+GLuint densityProgram = 0;
 GLuint densityBuffer;
 GLuint pressureBuffer;
 
@@ -160,33 +160,43 @@ GLuint createComputeShader(const char* path)
     return program;
 }
 
-void runComputeShader()
+void runForcesShader()
 {
-    glUseProgram(computeProgram);
+    glUseProgram(forcesProgram);
 
     // variables sent to compute shader
     GLint dtLoc =
-        glGetUniformLocation(computeProgram, "dt");
+        glGetUniformLocation(forcesProgram, "dt");
 
     glUniform1f(dtLoc, deltaTime);
 
-    GLint countLoc = glGetUniformLocation(computeProgram, "particleCount");
+    GLint countLoc = glGetUniformLocation(forcesProgram, "particleCount");
     glUniform1ui(countLoc, n_particles);
 
-    GLint gravityLoc = glGetUniformLocation(computeProgram, "gravity");
+    GLint gravityLoc = glGetUniformLocation(forcesProgram, "gravity");
     glUniform2f(gravityLoc, gravity.x, gravity.y);
 
-    GLint mousePosLoc = glGetUniformLocation(computeProgram, "mousePos");
+    glUniform1f(glGetUniformLocation(forcesProgram, "dampening"), dampening);
+
+
+    // mouse force
+    GLint mousePosLoc = glGetUniformLocation(forcesProgram, "mousePos");
     glUniform2f(mousePosLoc, mousePos.x, mousePos.y);
     
-    GLint mouseForceRadiusLoc = glGetUniformLocation(computeProgram, "mouseForceRadius");
+    GLint mouseForceRadiusLoc = glGetUniformLocation(forcesProgram, "mouseForceRadius");
     glUniform1f(mouseForceRadiusLoc, mouseForceRadius);
 
-    GLint mouseForceStrengthLoc = glGetUniformLocation(computeProgram, "mouseForceStrength");
+    GLint mouseForceStrengthLoc = glGetUniformLocation(forcesProgram, "mouseForceStrength");
     glUniform1f(mouseForceStrengthLoc, mouseForceStrength);
     
-    GLint mouseDownLoc = glGetUniformLocation(computeProgram, "mouseDown");
+    GLint mouseDownLoc = glGetUniformLocation(forcesProgram, "mouseDown");
     glUniform1ui(mouseDownLoc, mouseDown);
+
+    // pressure force
+    glUniform1f(glGetUniformLocation(forcesProgram, "smoothRadius"), smoothRadius);
+
+    // viscosity force
+    glUniform1f(glGetUniformLocation(forcesProgram, "viscosityStrength"), viscosityStrength);
 
     glDispatchCompute(
         (n_particles + 255) / 256,
@@ -200,6 +210,28 @@ void runComputeShader()
     );
 }
 
+void runDensityShader()
+{
+    glUseProgram(densityProgram);
+
+    // variables sent to density shader (i like this way better, change other one if i have time)
+    glUniform1ui(glGetUniformLocation(densityProgram, "particleCount"), n_particles);
+
+    glUniform1f(glGetUniformLocation(densityProgram, "smoothRadius"), smoothRadius);
+
+    glUniform1f(glGetUniformLocation(densityProgram, "targetDensity"), targetDensity);
+
+    glUniform1f(glGetUniformLocation(densityProgram, "pressureMultiplier"), pressureMultiplier);
+
+
+    glDispatchCompute(
+        (n_particles + 255) / 256,
+        1,
+        1
+    );
+
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+}
 ///////////////////////////////////////////////////////////////////////////////
 
 
@@ -311,8 +343,10 @@ void initialize()
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     ////// Compute shader init
-    computeProgram =
-        createComputeShader("integrate.comp");
+    forcesProgram =
+        createComputeShader("forces.comp");
+
+    densityProgram = createComputeShader("density.comp");
 
     // Particles
     glGenBuffers(1, &particleBuffer);
@@ -370,36 +404,28 @@ void initialize()
         densityBuffer
     );
 
-    // Pressure
+    // Pressure (later)
+    std::vector<float> pressures(n_particles, 0.0f);
 
+    glGenBuffers(1, &pressureBuffer);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, pressureBuffer);
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        pressures.size() * sizeof(float),
+        pressures.data(),
+        GL_DYNAMIC_DRAW
+    );
+
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER,
+        2,
+        pressureBuffer
+    );
     initShaderStuff();
 }
 
-float kernel(float radius, float dist)
-{
-    float volume = M_PI * radius * radius * radius * radius / 2.0f;
-    float value = std::max(0.0f, radius - dist);
-    return value * value * value / volume;
-}
-
-float kernelDerivative(float radius, float dist)
-{
-    if (dist > radius)
-    {
-        return 0;
-    }
-    float volume = M_PI * radius * radius * radius * radius / 2.0f; // for normalisation
-    return -3.0f * (radius - dist) * (radius - dist) / volume;
-
-}
-
-
-float densityToPressure(float density)
-{
-    float densityError = density - targetDensity;
-    float pressure = densityError * pressureMultiplier;//std::max(0.0f, densityError) * pressureMultiplier; // maybe not clamp at 0?
-    return pressure;
-}
 
 
 
@@ -410,26 +436,7 @@ float densityToPressure(float density)
 
 
 
-vec2 calculateMouseForce(int i)
-{
-    if (!mouseDown)
-        return vec2(0.0f);
 
-    vec2 offset = mousePos - predictedPositions[i];
-
-    float dist = length(offset);
-
-    if (dist > mouseForceRadius || dist < 1e-5f)
-        return vec2(0.0f);
-
-    vec2 dir = offset / dist;
-
-    // Smooth falloff
-    float strength =
-        1.0f - dist / mouseForceRadius;
-
-    return dir * strength * mouseForceStrength;
-}
 
 
 
@@ -446,8 +453,8 @@ void display()
     auto t0 = chrono::high_resolution_clock::now();
     if (!paused)
     {
-        
-        runComputeShader();
+        runDensityShader();
+        runForcesShader();
         
         
     }
@@ -468,7 +475,7 @@ void display()
     glUseProgram(shaderProgram);
     glBindVertexArray(vao);
 
-    glPointSize(10.0f); // ball size
+    
     glDrawArrays(GL_POINTS, 0, n_particles);
 
     

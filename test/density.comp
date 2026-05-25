@@ -18,8 +18,15 @@ layout(std430, binding = 1) buffer Densities
     float densities[];
 };
 
+layout(std430, binding = 2) buffer Pressures
+{
+    float pressures[];
+};
+
 uniform uint particleCount;
 uniform float smoothRadius;
+uniform float targetDensity;
+uniform float pressureMultiplier;
 
 float kernel(float radius, float dist)
 {
@@ -29,6 +36,13 @@ float kernel(float radius, float dist)
     float value = max(0.0, radius - dist);
 
     return value * value * value / volume;
+}
+
+float densityToPressure(float density)
+{
+    float densityError = density - targetDensity;
+    float pressure = densityError * pressureMultiplier;//std::max(0.0f, densityError) * pressureMultiplier; // maybe not clamp at 0?
+    return pressure;
 }
 
 void main()
@@ -53,4 +67,5 @@ void main()
     }
 
     densities[i] = density;
+    pressures[i] = densityToPressure(densities[i]);
 }

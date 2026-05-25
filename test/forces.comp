@@ -1,0 +1,191 @@
+#version 430
+
+layout(local_size_x = 256) in;
+
+struct Particle
+{
+    vec2 position;
+    vec2 velocity;
+};
+
+layout(std430, binding = 0) buffer Particles
+{
+    Particle particles[];
+};
+
+layout(std430, binding = 1) buffer DensityBuffer
+{
+    float densities[];
+};
+
+layout(std430, binding = 2) buffer PressureBuffer
+{
+    float pressures[];
+};
+
+uniform float dt;
+uniform uint particleCount;
+
+uniform float dampening;
+
+uniform vec2 gravity;
+
+uniform vec2 mousePos;
+uniform bool mouseDown;
+uniform float mouseForceRadius;
+uniform float mouseForceStrength;
+
+uniform float smoothRadius;
+uniform float viscosityStrength;
+
+vec2 calculateMouseForce(uint i)
+{
+    if (!mouseDown)
+        return vec2(0.0f);
+
+    vec2 offset = mousePos - particles[i].position;
+
+    float dist = length(offset);
+
+    if (dist > mouseForceRadius || dist < 1e-5f)
+        return vec2(0.0f);
+
+    vec2 dir = offset / dist;
+
+    // Smooth falloff
+    float strength =
+        1.0f - dist / mouseForceRadius;
+
+    return dir * strength * mouseForceStrength;
+}
+
+float kernel(float radius, float dist)
+{
+    float volume = 3.14159265359 * radius * radius * radius * radius / 2.0f;
+    float value = max(0.0, radius - dist);
+    return value * value * value / volume;
+}
+
+float kernelDerivative(float radius, float dist)
+{
+    if (dist > radius)
+    {
+        return 0;
+    }
+    float volume = 3.14159265359 * radius * radius * radius * radius / 2.0f; // for normalisation
+    return -3.0f * (radius - dist) * (radius - dist) / volume;
+
+}
+
+vec2 calculatePressureForce(uint i)
+{
+    vec2 force = vec2(0.0);
+
+    vec2 pos_i = particles[i].position;
+
+    for (uint j = 0; j < particleCount; j++)
+    {
+        if (i == j)
+            continue;
+
+        vec2 offset = particles[j].position - pos_i;
+
+        float sqrDst = dot(offset, offset);
+
+        if (sqrDst > smoothRadius * smoothRadius)
+            continue;
+
+        float dist = sqrt(sqrDst);
+
+        if (dist < 1e-6)
+            continue;
+
+        vec2 dir = offset / dist;
+
+        float slope =
+            kernelDerivative(smoothRadius, dist);
+
+        float density_j = densities[j];
+
+        float sharedPressure =
+            (pressures[i] + pressures[j]) * 0.5;
+
+        force += sharedPressure * dir * slope / density_j;
+    }
+
+    return force;
+}
+
+vec2 calculateViscosityForce(uint i) 
+{
+    vec2 force = vec2(0.0f);
+
+    vec2 pos_i = particles[i].position;
+    vec2 vel_i = particles[i].velocity;
+    
+    for (uint j = 0; j < particleCount; j++)
+    {
+        if (j == i) continue;
+
+        vec2 offset = particles[j].position - pos_i;
+
+        float sqrDst = dot(offset, offset);
+
+        if (sqrDst > smoothRadius * smoothRadius)
+            continue;
+
+        float dist = sqrt(sqrDst);
+
+        if (dist < 1e-6)
+            continue;
+
+        vec2 velDiff = particles[j].velocity - vel_i;
+
+        float influence = kernel(smoothRadius, dist);
+
+        force += velDiff * influence;
+     }
+    
+    return viscosityStrength * force;
+} 
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+
+    if (id >= particleCount)
+        return;
+
+    particles[id].velocity += gravity * dt;
+
+    particles[id].velocity += calculateMouseForce(id) * dt;
+
+    float density = max(densities[id], 0.0001);
+
+    particles[id].velocity += calculatePressureForce(id) / density * dt;
+
+    particles[id].velocity += calculateViscosityForce(id) * dt;
+
+    particles[id].position +=
+        particles[id].velocity * dt;
+
+    ///// boundary collisions
+    if (particles[id].position.x < -1.0f) {
+            particles[id].position.x = -1.0f;
+            particles[id].velocity.x *= -dampening;
+        }
+    if (particles[id].position.x > 1.0f) {
+            particles[id].position.x = 1.0f;
+            particles[id].velocity.x *= -dampening;
+        }
+            
+
+    if (particles[id].position.y < -1.0f) {
+            particles[id].position.y = -1.0f;
+            particles[id].velocity.y *= -dampening;
+        }
+    if (particles[id].position.y > 1.0f) {
+            particles[id].position.y = 1.0f;
+            particles[id].velocity.y *= -dampening;
+        }
+}

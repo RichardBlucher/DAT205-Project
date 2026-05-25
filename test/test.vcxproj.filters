@@ -20,7 +20,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="integrate.comp">
+    <None Include="forces.comp">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="density.comp">
