@@ -144,6 +144,7 @@
   <ItemGroup>
     <None Include="density.comp" />
     <None Include="forces.comp" />
+    <None Include="predict.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

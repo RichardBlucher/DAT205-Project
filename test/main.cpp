@@ -46,7 +46,7 @@ std::vector<vec2> velocities(n_particles);
 //std::vector<float> pressures(n_particles);
 
 std::vector<vec2> predictedPositions(n_particles);
-float predictionFactor = 1.0f;
+float predictionFactor = 0.0f;
 // Window
 SDL_Window* g_window = nullptr;
 int windowWidth = 800;
@@ -98,6 +98,9 @@ GLuint particleBuffer;
 GLuint densityProgram = 0;
 GLuint densityBuffer;
 GLuint pressureBuffer;
+
+GLuint predictProgram = 0;
+GLuint predPosBuffer;
 
 std::string loadFile(const char* path)
 {
@@ -232,6 +235,30 @@ void runDensityShader()
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
+
+void runPredictShader()
+{
+    glUseProgram(predictProgram);
+
+    // variables sent to predict shader (i like this way better, change other one if i have time)
+    glUniform1ui(glGetUniformLocation(predictProgram, "particleCount"), n_particles);
+
+    GLint dtLoc =
+        glGetUniformLocation(predictProgram, "dt");
+
+    glUniform1f(dtLoc, deltaTime);
+
+    glUniform1f(glGetUniformLocation(predictProgram, "predictionFactor"), predictionFactor);
+
+
+    glDispatchCompute(
+        (n_particles + 255) / 256,
+        1,
+        1
+    );
+
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+}
 ///////////////////////////////////////////////////////////////////////////////
 
 
@@ -348,6 +375,8 @@ void initialize()
 
     densityProgram = createComputeShader("density.comp");
 
+    predictProgram = createComputeShader("predict.comp");
+
     // Particles
     glGenBuffers(1, &particleBuffer);
 
@@ -404,7 +433,7 @@ void initialize()
         densityBuffer
     );
 
-    // Pressure (later)
+    // Pressure
     std::vector<float> pressures(n_particles, 0.0f);
 
     glGenBuffers(1, &pressureBuffer);
@@ -422,6 +451,26 @@ void initialize()
         GL_SHADER_STORAGE_BUFFER,
         2,
         pressureBuffer
+    );
+
+    // Predicted positions
+    std::vector<vec2> predPos(n_particles);
+
+    glGenBuffers(1, &predPosBuffer);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, predPosBuffer);
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        predPos.size() * sizeof(vec2),
+        predPos.data(),
+        GL_DYNAMIC_DRAW
+    );
+
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER,
+        3,
+        predPosBuffer
     );
     initShaderStuff();
 }
@@ -453,6 +502,7 @@ void display()
     auto t0 = chrono::high_resolution_clock::now();
     if (!paused)
     {
+        runPredictShader();
         runDensityShader();
         runForcesShader();
         

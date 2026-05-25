@@ -23,6 +23,11 @@ layout(std430, binding = 2) buffer Pressures
     float pressures[];
 };
 
+layout(std430, binding = 3) buffer predPosBuffer
+{
+    vec2 predPos[];
+};
+
 uniform uint particleCount;
 uniform float smoothRadius;
 uniform float targetDensity;
@@ -52,14 +57,14 @@ void main()
     if(i >= particleCount)
         return;
 
-    vec2 pos_i = particles[i].position;
+    vec2 pos_i = predPos[i];
 
     float density = 0.0;
 
     for(uint j = 0; j < particleCount; j++)
     {
         vec2 diff =
-            particles[j].position - pos_i;
+            predPos[j] - pos_i;
 
         float dist = length(diff);
 

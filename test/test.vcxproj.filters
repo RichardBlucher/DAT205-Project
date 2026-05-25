@@ -26,5 +26,6 @@
     <None Include="density.comp">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="predict.comp" />
   </ItemGroup>
 </Project>

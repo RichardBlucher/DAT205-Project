@@ -23,6 +23,11 @@ layout(std430, binding = 2) buffer PressureBuffer
     float pressures[];
 };
 
+layout(std430, binding = 3) buffer predPosBuffer
+{
+    vec2 predPos[];
+};
+
 uniform float dt;
 uniform uint particleCount;
 
@@ -43,7 +48,7 @@ vec2 calculateMouseForce(uint i)
     if (!mouseDown)
         return vec2(0.0f);
 
-    vec2 offset = mousePos - particles[i].position;
+    vec2 offset = mousePos - predPos[i];
 
     float dist = length(offset);
 
@@ -81,14 +86,14 @@ vec2 calculatePressureForce(uint i)
 {
     vec2 force = vec2(0.0);
 
-    vec2 pos_i = particles[i].position;
+    vec2 pos_i = predPos[i];
 
     for (uint j = 0; j < particleCount; j++)
     {
         if (i == j)
             continue;
 
-        vec2 offset = particles[j].position - pos_i;
+        vec2 offset = predPos[j] - pos_i;
 
         float sqrDst = dot(offset, offset);
 
@@ -120,14 +125,14 @@ vec2 calculateViscosityForce(uint i)
 {
     vec2 force = vec2(0.0f);
 
-    vec2 pos_i = particles[i].position;
+    vec2 pos_i = predPos[i];
     vec2 vel_i = particles[i].velocity;
     
     for (uint j = 0; j < particleCount; j++)
     {
         if (j == i) continue;
 
-        vec2 offset = particles[j].position - pos_i;
+        vec2 offset = predPos[j] - pos_i;
 
         float sqrDst = dot(offset, offset);
 
