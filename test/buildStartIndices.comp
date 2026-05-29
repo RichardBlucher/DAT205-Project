@@ -1,0 +1,44 @@
+#version 430
+
+layout(local_size_x = 256) in;
+
+struct SpatialEntry
+{
+    uint particleIndex;
+    uint cellKey;
+};
+
+layout(std430, binding = 4) buffer SpatialLookup
+{
+    SpatialEntry entries[];
+};
+
+layout(std430, binding = 5) buffer CellStartBuffer
+{
+    int startIndices[];
+};
+
+uniform uint particleCount;
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+
+    if(id >= particleCount)
+        return;
+
+    uint key = entries[id].cellKey;
+
+    if(id == 0)
+    {
+        startIndices[key] = int(id);
+        return;
+    }
+
+    uint prevKey = entries[id - 1].cellKey;
+
+    if(key != prevKey)
+    {
+        startIndices[key] = int(id);
+    }
+}

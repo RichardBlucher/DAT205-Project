@@ -49,6 +49,8 @@ uniform float smoothRadius;
 uniform float targetDensity;
 uniform float pressureMultiplier;
 
+uniform uint gridWidth;
+
 float kernel(float radius, float dist)
 {
     float volume =
@@ -66,6 +68,12 @@ float densityToPressure(float density)
     return pressure;
 }
 
+ivec2 PositionToCellCoord(vec2 point)
+{
+    vec2 shifted = point + vec2(1.0);
+    return ivec2(floor(shifted / smoothRadius));
+}
+
 
 
 void main()
@@ -77,18 +85,50 @@ void main()
 
     vec2 pos_i = predPos[i];
 
+    ivec2 baseCell = PositionToCellCoord(pos_i);
+
     float density = 0.0;
 
-    for(uint j = 0; j < particleCount; j++)
+    // 3x3 neighborhood
+    for(int y = -1; y <= 1; y++)
     {
-        vec2 diff =
-            predPos[j] - pos_i;
+        for(int x = -1; x <= 1; x++)
+        {
+            ivec2 cell = baseCell + ivec2(x, y);
 
-        float dist = length(diff);
+            if(cell.x < 0 || cell.y < 0)
+                continue;
 
-        density += kernel(smoothRadius, dist);
+            if(cell.x >= int(gridWidth) || cell.y >= int(gridWidth))
+                continue;
+
+            uint key = uint(cell.x + cell.y * int(gridWidth));
+
+            int start = startIndices[key];
+
+            if(start == -1)
+                continue;
+
+            // iterate linked bucket
+            for(uint j = start; j < particleCount; j++)
+            {
+                if(entries[j].cellKey != key)
+                    break;
+
+                uint pIndex = entries[j].particleIndex;
+
+                vec2 diff = predPos[pIndex] - pos_i;
+
+                float dist = length(diff);
+
+                if(dist > smoothRadius)
+                    continue;
+
+                density += kernel(smoothRadius, dist);
+            }
+        }
     }
 
     densities[i] = density;
-    pressures[i] = densityToPressure(densities[i]);
+    pressures[i] = densityToPressure(density);
 }

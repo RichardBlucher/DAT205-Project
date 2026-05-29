@@ -30,5 +30,10 @@ void main()
     if (id >= particleCount)
         return;
 
-    predPos[id] = particles[id].position + particles[id].velocity * dt * predictionFactor;
+    predPos[id] = clamp(
+    particles[id].position +
+    particles[id].velocity * dt * predictionFactor,
+    vec2(-0.999),
+    vec2(0.999)
+);
 }

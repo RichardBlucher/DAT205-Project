@@ -1,0 +1,74 @@
+#version 430
+
+layout(local_size_x = 256) in;
+
+struct Particle
+{
+    vec2 position;
+    vec2 velocity;
+};
+
+layout(std430, binding = 3) buffer PredPosBuffer
+{
+    vec2 predPos[];
+};
+
+layout(std430, binding = 4) buffer CellCounts
+{
+    uint cellCounts[];
+};
+
+layout(std430, binding = 5) buffer CellParticles
+{
+    uint cellParticles[];
+};
+
+uniform uint particleCount;
+
+uniform uint gridWidth;
+uniform uint gridHeight;
+
+uniform float smoothRadius;
+
+uniform uint MAX_PARTICLES_PER_CELL;
+
+uniform vec2 worldMin;  // e.g. (-1.0, -1.0)
+uniform vec2 worldMax;  // e.g. ( 1.0,  1.0)
+
+ivec2 PositionToCellCoord(vec2 point)
+{
+    vec2 shifted = point - worldMin;
+    return ivec2(floor(shifted / smoothRadius));
+}
+
+void main()
+{
+    uint id = gl_GlobalInvocationID.x;
+
+    if(id >= particleCount)
+        return;
+
+    ivec2 cell =
+        PositionToCellCoord(predPos[id]);
+
+    if(cell.x < 0 || cell.y < 0)
+        return;
+
+    if(cell.x >= int(gridWidth) ||
+       cell.y >= int(gridHeight))
+        return;
+
+    uint key =
+        uint(cell.x + cell.y * int(gridWidth));
+
+    uint offset =
+        atomicAdd(cellCounts[key], 1);
+
+    if(offset >= MAX_PARTICLES_PER_CELL)
+        return;
+
+    uint index =
+        key * MAX_PARTICLES_PER_CELL + offset;
+
+    cellParticles[index] = id;
+}
