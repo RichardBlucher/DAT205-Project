@@ -23,6 +23,11 @@ layout(std430, binding = 5) buffer CellParticles
     uint cellParticles[];
 };
 
+layout(std430, binding = 6) buffer OverflowBuffer
+{
+    uint overflowCounter;
+};
+
 uniform uint particleCount;
 
 uniform uint gridWidth;
@@ -32,8 +37,8 @@ uniform float smoothRadius;
 
 uniform uint MAX_PARTICLES_PER_CELL;
 
-uniform vec2 worldMin;  // e.g. (-1.0, -1.0)
-uniform vec2 worldMax;  // e.g. ( 1.0,  1.0)
+uniform vec2 worldMin;  
+uniform vec2 worldMax;  
 
 ivec2 PositionToCellCoord(vec2 point)
 {
@@ -65,7 +70,10 @@ void main()
         atomicAdd(cellCounts[key], 1);
 
     if(offset >= MAX_PARTICLES_PER_CELL)
+    {
+        atomicAdd(overflowCounter, 1u);
         return;
+    }
 
     uint index =
         key * MAX_PARTICLES_PER_CELL + offset;

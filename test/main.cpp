@@ -25,11 +25,13 @@ using namespace glm;
 
 // Simulation constants
 float smoothRadius = 0.05f;
+float smoothRadiusSq = smoothRadius * smoothRadius;
+float kernelVolume = 3.141592 * pow(smoothRadius, 4) / 2.0f;
 
 float targetDensity = 6.5f;
 float pressureMultiplier = 0.0f;
 
-int n_particles = 100000;
+int n_particles = 50000;
 std::vector<float> densities(n_particles, 0.0f);
 // Particles
 struct Particle
@@ -42,15 +44,14 @@ std::vector<Particle> particles(n_particles);
 
 std::vector<vec2> positions(n_particles);
 std::vector<vec2> velocities(n_particles);
-//std::vector<float> densities(n_particles);
-//std::vector<float> pressures(n_particles);
+
 
 std::vector<vec2> predictedPositions(n_particles);
 float predictionFactor = 0.0f;
 // Window
 SDL_Window* g_window = nullptr;
-int windowWidth = 800;
-int windowHeight = 600;
+int windowWidth = 1280;
+int windowHeight = 720;
 
 // Time
 float currentTime = 0.0f;
@@ -84,24 +85,7 @@ bool mouseDown = false;
 
 float mouseForceRadius = 0.3f;
 float mouseForceStrength = 0.0f;
-///////////////////////////////////////////////////////////////////////////////
-// Spacial hashing
 
-const unsigned int tableSize = 2 * n_particles;
-//int gridWidth;
-struct Entry
-{
-    uint32_t particleIndex;
-    uint32_t cellKey;
-
-    // for sorting by cellKey
-    bool operator<(const Entry& other) const
-    {
-        return cellKey < other.cellKey;
-    }
-};
-std::vector<Entry> spacialEntries(n_particles);
-std::vector<int> emptyStartIndices(tableSize, -1);
 ///////////////////////////////////////////////////////////////////////////////
 // Compute shader stuff
 #include <fstream>
@@ -110,7 +94,7 @@ std::vector<int> emptyStartIndices(tableSize, -1);
 GLuint forcesProgram = 0;
 
 GLuint particleBuffer;
-//GLuint velSSBO;
+
 
 GLuint densityProgram = 0;
 GLuint densityBuffer;
@@ -119,11 +103,7 @@ GLuint pressureBuffer;
 GLuint predictProgram = 0;
 GLuint predPosBuffer;
 
-//GLuint keyProgram = 0;
-//GLuint entriesBuffer;
-//
-//GLuint startIdxProgram = 0;
-//GLuint cellStartBuffer;
+
 
 // Uniform grid
 GLuint clearGridProgram = 0;
@@ -131,15 +111,16 @@ GLuint buildGridProgram = 0;
 GLuint cellCountBuffer;
 
 GLuint cellParticleBuffer;
+GLuint overflowBuffer;
 
 float worldMinX = -1.0f, worldMinY = -1.0f;
 float worldMaxX = 1.0f, worldMaxY = 1.0f;
 
 uint gridWidth = uint(ceil((worldMaxX - worldMinX) / smoothRadius)) + 1;
 uint gridHeight = uint(ceil((worldMaxY - worldMinY) / smoothRadius)) + 1;
-const unsigned int numCells = gridWidth * gridHeight;
+unsigned int numCells = gridWidth * gridHeight;
 
-const unsigned int MAX_PARTICLES_PER_CELL = 64;
+unsigned int MAX_PARTICLES_PER_CELL = 100 * ceil(float(n_particles) / numCells);
 
 std::string loadFile(const char* path)
 {
@@ -236,6 +217,8 @@ void runForcesShader()
 
     // pressure force
     glUniform1f(glGetUniformLocation(forcesProgram, "smoothRadius"), smoothRadius);
+    glUniform1f(glGetUniformLocation(forcesProgram, "smoothRadiusSq"), smoothRadiusSq);
+    glUniform1f(glGetUniformLocation(forcesProgram, "kernelVolume"), kernelVolume);
 
     // viscosity force
     glUniform1f(glGetUniformLocation(forcesProgram, "viscosityStrength"), viscosityStrength);
@@ -269,6 +252,8 @@ void runDensityShader()
     glUniform1ui(glGetUniformLocation(densityProgram, "particleCount"), n_particles);
 
     glUniform1f(glGetUniformLocation(densityProgram, "smoothRadius"), smoothRadius);
+    glUniform1f(glGetUniformLocation(densityProgram, "smoothRadiusSq"), smoothRadiusSq);
+    glUniform1f(glGetUniformLocation(densityProgram, "kernelVolume"), kernelVolume);
 
     glUniform1f(glGetUniformLocation(densityProgram, "targetDensity"), targetDensity);
 
@@ -318,84 +303,6 @@ void runPredictShader()
 ///////////////////////////////////////////////////////////////////////////////
 
 
-
-//void runKeyShader()
-//{
-//    gridWidth = ceil(2.0 / smoothRadius);
-//    glUseProgram(keyProgram);
-//
-//    // variables sent to density shader (i like this way better, change other one if i have time)
-//    glUniform1ui(glGetUniformLocation(keyProgram, "particleCount"), n_particles);
-//
-//    glUniform1f(glGetUniformLocation(keyProgram, "smoothRadius"), smoothRadius);
-//
-//    glUniform1ui(glGetUniformLocation(keyProgram, "gridWidth"), gridWidth);
-//
-//
-//
-//    glDispatchCompute(
-//        (n_particles + 255) / 256,
-//        1,
-//        1
-//    );
-//
-//    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-//
-//    // Download entries from GPU
-//    glBindBuffer(GL_SHADER_STORAGE_BUFFER, entriesBuffer);
-//
-//    glGetBufferSubData(
-//        GL_SHADER_STORAGE_BUFFER,
-//        0,
-//        spacialEntries.size() * sizeof(Entry),
-//        spacialEntries.data()
-//    );
-//
-//    // Sort on CPU
-//    std::sort(
-//        spacialEntries.begin(),
-//        spacialEntries.end()
-//    );
-//    
-//
-//    // Upload sorted entries to GPU
-//    glBindBuffer(GL_SHADER_STORAGE_BUFFER, entriesBuffer);
-//
-//    glBufferSubData(
-//        GL_SHADER_STORAGE_BUFFER,
-//        0,
-//        spacialEntries.size() * sizeof(Entry),
-//        spacialEntries.data()
-//    );
-//    
-//    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-//}
-//
-//void runStartIndicesShader()
-//{
-//    glUseProgram(startIdxProgram);
-//
-//    
-//    glUniform1ui(glGetUniformLocation(startIdxProgram, "particleCount"), n_particles);
-//
-//
-//    glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellStartBuffer);
-//
-//    glBufferSubData(
-//        GL_SHADER_STORAGE_BUFFER,
-//        0,
-//        tableSize * sizeof(int),
-//        emptyStartIndices.data()
-//    );
-//
-//    glDispatchCompute(
-//        (n_particles + 255) / 256,
-//        1,
-//        1
-//    );
-//
-//    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-//}
 void runClearGridShader()
 {
     glUseProgram(clearGridProgram);
@@ -415,6 +322,7 @@ void runClearGridShader()
 
 void runBuildGridShader()
 {
+    
     glUseProgram(buildGridProgram);
 
     glUniform1ui(glGetUniformLocation(buildGridProgram, "particleCount"), n_particles);
@@ -551,7 +459,7 @@ void initialize()
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     ////// Compute shader init
-    //gridWidth = ceil(2.0 / smoothRadius);
+    
 
     forcesProgram =
         createComputeShader("forces3.comp");
@@ -560,9 +468,7 @@ void initialize()
 
     predictProgram = createComputeShader("predict.comp");
 
-    //keyProgram = createComputeShader("buildKeys.comp");
-
-    //startIdxProgram = createComputeShader("buildStartIndices.comp");
+    
 
     clearGridProgram = createComputeShader("clearGrid.comp");
     buildGridProgram = createComputeShader("buildGrid.comp");
@@ -584,25 +490,9 @@ void initialize()
         GL_SHADER_STORAGE_BUFFER,
         0,
         particleBuffer
-    ); // comute shader writes directly to render buffer
+    ); // compute shader writes directly to render buffer
 
-    // Velocities
-    /*glGenBuffers(1, &velSSBO);
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSBO);
-
-    glBufferData(
-        GL_SHADER_STORAGE_BUFFER,
-        particles.size() * sizeof(Particle),
-        particles.data(),
-        GL_DYNAMIC_DRAW
-    );
-
-    glBindBufferBase(
-        GL_SHADER_STORAGE_BUFFER,
-        1,
-        velSSBO
-    );*/
+    
 
     // Densities
     std::vector<float> densities(n_particles, 0.0f);
@@ -664,45 +554,7 @@ void initialize()
         predPosBuffer
     );
 
-    //// Spacial lookup
-    //
-
-    //glGenBuffers(1, &entriesBuffer);
-
-    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, entriesBuffer);
-
-    //glBufferData(
-    //    GL_SHADER_STORAGE_BUFFER,
-    //    spacialEntries.size() * sizeof(Entry),
-    //    nullptr,
-    //    GL_DYNAMIC_DRAW
-    //);
-
-    //glBindBufferBase(
-    //    GL_SHADER_STORAGE_BUFFER,
-    //    4,
-    //    entriesBuffer
-    //);
-
-
-    //// Start indices
-    //std::vector<int> startIndices(tableSize, INT_MAX);
-    //glGenBuffers(1, &cellStartBuffer);
-
-    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellStartBuffer);
-
-    //glBufferData(
-    //    GL_SHADER_STORAGE_BUFFER,
-    //    startIndices.size() * sizeof(int),
-    //    nullptr,
-    //    GL_DYNAMIC_DRAW
-    //);
-
-    //glBindBufferBase(
-    //    GL_SHADER_STORAGE_BUFFER,
-    //    5,
-    //    cellStartBuffer
-    //);
+    
 
     /////// Uniform grid
     // Cell counts
@@ -753,6 +605,28 @@ void initialize()
         cellParticleBuffer
     );
 
+    // Cell particles overflow debug
+
+    unsigned int zero = 0;
+
+    glGenBuffers(1, &overflowBuffer);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, overflowBuffer);
+
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        sizeof(unsigned int),
+        &zero,
+        GL_DYNAMIC_DRAW
+    );
+
+    glBindBufferBase(
+        GL_SHADER_STORAGE_BUFFER,
+        6,
+        overflowBuffer
+    );
+
+
     initShaderStuff();
 }
 
@@ -787,45 +661,38 @@ void display()
         runClearGridShader();
 
         runBuildGridShader();
-        std::vector<unsigned int> debugCounts(numCells, 0);
-        std::vector<unsigned int> debugParticles(numCells * MAX_PARTICLES_PER_CELL, 0);
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-            numCells * sizeof(unsigned int), debugCounts.data());
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellParticleBuffer);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-            numCells * MAX_PARTICLES_PER_CELL * sizeof(unsigned int), debugParticles.data());
-
-        //// Check for out-of-range particle indices
-        //unsigned int badIndices = 0;
-        //for (uint cell = 0; cell < numCells; cell++)
-        //{
-        //    uint count = std::min(debugCounts[cell], MAX_PARTICLES_PER_CELL);
-        //    for (uint k = 0; k < count; k++)
-        //    {
-        //        uint idx = debugParticles[cell * MAX_PARTICLES_PER_CELL + k];
-        //        if (idx >= (unsigned int)n_particles)
-        //            badIndices++;
-        //    }
-        //}
-        //std::cout << "Bad indices: " << badIndices << "\n";
-
-        //// Also print which cells are near the bottom-left corner
-        //std::cout << "Corner cell counts:\n";
-        //for (int cy = 0; cy < 3; cy++)
-        //    for (int cx = 0; cx < 3; cx++)
-        //        std::cout << "  cell(" << cx << "," << cy << ") count = "
-        //        << debugCounts[cx + cy * gridWidth] << "\n";
+        
         runDensityShader();
         runForcesShader();
-        // Temporarily print what gridWidth/gridHeight you're getting
-        /*std::cout << "smoothRadius: " << smoothRadius << "\n";
-        std::cout << "gridWidth: " << gridWidth << "\n";
-        std::cout << "gridHeight: " << gridHeight << "\n";
-        std::cout << "numCells: " << numCells << "\n";*/
         
+        //// Overflow check
+        static float overflowTimer = 0.0f;
+
+        overflowTimer += deltaTime;
+
+        if (overflowTimer >= 1.0f)
+        {
+            overflowTimer = 0.0f;
+
+            unsigned int overflows = 0;
+
+            glBindBuffer(
+                GL_SHADER_STORAGE_BUFFER,
+                overflowBuffer
+            );
+
+            glGetBufferSubData(
+                GL_SHADER_STORAGE_BUFFER,
+                0,
+                sizeof(unsigned int),
+                &overflows
+            );
+
+            std::cout
+                << "Overflows: "
+                << overflows
+                << std::endl;
+        }
         
     }
 
@@ -889,6 +756,41 @@ bool handleEvents()
     return quit;
 }
 
+
+
+
+void rebuildGrid()
+{
+    gridWidth = uint(ceil((worldMaxX - worldMinX) / smoothRadius)) + 1;
+    gridHeight = uint(ceil((worldMaxY - worldMinY) / smoothRadius)) + 1;
+    numCells = gridWidth * gridHeight;
+    MAX_PARTICLES_PER_CELL = MAX_PARTICLES_PER_CELL = 100 * ceil(float(n_particles) / numCells);
+    smoothRadiusSq = smoothRadius * smoothRadius;
+    kernelVolume = 3.141592 * pow(smoothRadius, 4) / 2.0f;
+
+    // Reallocate cellCountBuffer
+    std::vector<unsigned int> emptyCounts(numCells, 0);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellCountBuffer);
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        numCells * sizeof(unsigned int),
+        emptyCounts.data(),
+        GL_DYNAMIC_DRAW
+    );
+
+    // Reallocate cellParticleBuffer
+    std::vector<unsigned int> emptyParticles(
+        numCells * MAX_PARTICLES_PER_CELL, 0
+    );
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, cellParticleBuffer);
+    glBufferData(
+        GL_SHADER_STORAGE_BUFFER,
+        emptyParticles.size() * sizeof(unsigned int),
+        emptyParticles.data(),
+        GL_DYNAMIC_DRAW
+    );
+}
+
 void gui()
 {
     // ----------------- Set variables --------------------------
@@ -910,7 +812,10 @@ void gui()
         ImGui::SliderFloat("Pressure Multiplier", &pressureMultiplier, 0.0f, 5.0f);
 
         // kernel radius
+        float prevRadius = smoothRadius;
         ImGui::SliderFloat("Smooth Radius", &smoothRadius, 0.0f, 0.1f);
+        if (smoothRadius != prevRadius)
+            rebuildGrid();
 
         // damping
         ImGui::SliderFloat("Dampening", &dampening, 0.0f, 1.0f);
@@ -929,18 +834,7 @@ void gui()
     }
 
     // Debug
-    if (ImGui::Button("Reset Simulation"))
-    {
-        for (int i = 0; i < n_particles; i++)
-        {
-            positions[i] = vec2(
-                (rand() / float(RAND_MAX)) * 2.0f - 1.0f,
-                (rand() / float(RAND_MAX)) * 2.0f - 1.0f
-            );
-            velocities[i] = vec2(0.0f);
-        }
-    }
-
+    
     ImGui::Checkbox("Pause", &paused);
 
     if (paused && ImGui::Button("Step"))
@@ -953,40 +847,7 @@ void gui()
         runForcesShader();
     }
 
-    // plotting 
-    ImGui::Separator();
-    ImGui::Text("Simulation Statistics");
-
-    float currentDensity =
-        avgDensityHistory[(graphOffset - 1 + graphSize) % graphSize];
-
-    float currentVelocity =
-        avgVelocityHistory[(graphOffset - 1 + graphSize) % graphSize];
-
-    ImGui::Text("Avg Density: %.3f", currentDensity);
-    ImGui::Text("Avg Velocity: %.3f", currentVelocity);
-
-    ImGui::PlotLines(
-        "Average Density",
-        avgDensityHistory.data(),
-        graphSize,
-        graphOffset,
-        nullptr,
-        0.0f,
-        targetDensity * 5.0f,
-        ImVec2(0, 80)
-    );
-
-    ImGui::PlotLines(
-        "Average Velocity",
-        avgVelocityHistory.data(),
-        graphSize,
-        graphOffset,
-        nullptr,
-        0.0f,
-        5.0f,
-        ImVec2(0, 80)
-    );
+    
 
     labhelper::perf::drawEventsWindow();
 }
@@ -1016,7 +877,6 @@ int main(int argc, char* argv[])
 
         // render to window
         display();
-        //std::cout << particles[10].velocity.x << std::endl;
 
         // Render overlay GUI.
         gui();
