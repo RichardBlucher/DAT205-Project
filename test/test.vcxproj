@@ -143,15 +143,17 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="buildGrid.comp" />
-    <None Include="buildKeys.comp" />
-    <None Include="buildStartIndices.comp" />
     <None Include="clearGrid.comp" />
     <None Include="density.comp" />
+    <None Include="density.frag" />
+    <None Include="density.vert" />
     <None Include="density2.comp" />
     <None Include="density3.comp" />
     <None Include="forces.comp" />
     <None Include="forces2.comp" />
     <None Include="forces3.comp" />
+    <None Include="particles.frag" />
+    <None Include="particles.vert" />
     <None Include="predict.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

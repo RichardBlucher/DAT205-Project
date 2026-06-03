@@ -76,26 +76,25 @@ void main()
 
     vec2 pos_i = predPos[i];
 
-    ivec2 baseCell =
-        PositionToCellCoord(pos_i);
+    ivec2 baseCell = PositionToCellCoord(pos_i);
 
     float density = 0.0;
 
-    for(int y = -1; y <= 1; y++)
+    for(int y = -1; y <= 1; y++) // neighbor cells in y
     {
-        for(int x = -1; x <= 1; x++)
+        for(int x = -1; x <= 1; x++) // neighbor cells in x
         {
             ivec2 cell = baseCell + ivec2(x, y);
 
-            if(cell.x < 0 || cell.y < 0)
+            if(cell.x < 0 || cell.y < 0) // if cell is out of frame
                 continue;
 
-            if(cell.x >= int(gridWidth) || cell.y >= int(gridHeight))
+            if(cell.x >= int(gridWidth) || cell.y >= int(gridHeight)) // if cell is out of frame
                 continue;
 
             uint key = uint(cell.x + cell.y * int(gridWidth));
 
-            uint count = min(cellCounts[key], MAX_PARTICLES_PER_CELL);
+            uint count = min(cellCounts[key], MAX_PARTICLES_PER_CELL); // hopefully cellCounts, otherwise overflow
 
             for(uint k = 0; k < count; k++)
             {
@@ -105,7 +104,8 @@ void main()
 
                 float sqrDst = dot(diff, diff);
 
-                if (sqrDst > smoothRadiusSq) continue;
+                if (sqrDst > smoothRadiusSq) 
+                    continue;
 
                 float dist = sqrt(sqrDst);
 
@@ -113,7 +113,7 @@ void main()
             }
         }
     }
-    float clampedDensity = max(density, 0.0001);
+    float clampedDensity = max(density, 0.0001); // clamp to not divide by 0 later
     densities[i] = clampedDensity;
     pressures[i] = densityToPressure(clampedDensity);
 }

@@ -35,5 +35,5 @@ void main()
     particles[id].velocity * dt * predictionFactor,
     vec2(-0.999),
     vec2(0.999)
-);
+); // Clamp so they are not outside frame
 }

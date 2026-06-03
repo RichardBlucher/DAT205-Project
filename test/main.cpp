@@ -23,10 +23,13 @@ using namespace glm;
 #include <algorithm>
 #include <climits>
 
+#include <fstream>
+#include <sstream>
+
 // Simulation constants
 float smoothRadius = 0.05f;
 float smoothRadiusSq = smoothRadius * smoothRadius;
-float kernelVolume = 3.141592 * pow(smoothRadius, 4) / 2.0f;
+float kernelVolume = 3.141592 * pow(smoothRadius, 4) / 2.0f; // faster to precompute
 
 float targetDensity = 6.5f;
 float pressureMultiplier = 0.0f;
@@ -41,10 +44,6 @@ struct Particle
 };
 
 std::vector<Particle> particles(n_particles);
-
-std::vector<vec2> positions(n_particles);
-std::vector<vec2> velocities(n_particles);
-
 
 std::vector<vec2> predictedPositions(n_particles);
 float predictionFactor = 0.0f;
@@ -70,13 +69,6 @@ float viscosityStrength = 0.1f;
 // Debug
 static bool paused = true;
 
-// For plots
-const int graphSize = 200;
-
-std::vector<float> avgDensityHistory(graphSize, 0.0f);
-std::vector<float> avgVelocityHistory(graphSize, 0.0f);
-
-int graphOffset = 0;
 
 // Mouse interactions
 vec2 mousePos(0.0f);
@@ -88,8 +80,7 @@ float mouseForceStrength = 0.0f;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Compute shader stuff
-#include <fstream>
-#include <sstream>
+
 
 GLuint forcesProgram = 0;
 
@@ -121,6 +112,15 @@ uint gridHeight = uint(ceil((worldMaxY - worldMinY) / smoothRadius)) + 1;
 unsigned int numCells = gridWidth * gridHeight;
 
 unsigned int MAX_PARTICLES_PER_CELL = 100 * ceil(float(n_particles) / numCells);
+
+// Renderers
+GLuint particleRender = 0;
+GLuint densityRender = 0;  
+
+enum class RenderMode { Particles, Density };
+RenderMode renderMode = RenderMode::Particles;
+
+float densityColorScaling = 10.0;
 
 std::string loadFile(const char* path)
 {
@@ -181,6 +181,38 @@ GLuint createComputeShader(const char* path)
     glDeleteShader(shader);
 
     return program;
+}
+
+GLuint createRenderProgram(const char* vertPath, const char* fragPath)
+{
+    std::string vertSrc = loadFile(vertPath);
+    std::string fragSrc = loadFile(fragPath);
+    const char* vs = vertSrc.c_str();
+    const char* fs = fragSrc.c_str();
+
+    auto compile = [](GLenum type, const char* src) {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512]; glGetShaderInfoLog(s, 512, nullptr, log);
+            std::cout << "Shader error: " << log << "\n";
+        }
+        return s;
+        };
+
+    GLuint vert = compile(GL_VERTEX_SHADER, vs);
+    GLuint frag = compile(GL_FRAGMENT_SHADER, fs);
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
 }
 
 void runForcesShader()
@@ -353,59 +385,18 @@ void runBuildGridShader()
 
 ///////////////////////////////////////////////////////////////////////////////
 GLuint vao = 0;
-GLuint shaderProgram = 0;
+GLuint emptyVao = 0;
 
 void initShaderStuff()
 {
 
+    particleRender = createRenderProgram("particles.vert", "particles.frag");
+    densityRender = createRenderProgram("density.vert", "density.frag");
 
+    
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
-
     glBindBuffer(GL_ARRAY_BUFFER, particleBuffer);
-
-    // Simple shader
-    const char* vs = R"(
-    #version 330 core
-    layout(location = 0) in vec2 pos;
-    
-    void main() {
-        gl_Position = vec4(pos, 0.0, 1.0);
-        gl_PointSize = 3.0;
-    }
-)";
-
-    const char* fs = R"(
-    #version 330 core
-    out vec4 color;
-
-    void main()
-    {
-        vec2 coord = gl_PointCoord * 2.0 - 1.0; // map [0,1] -> [-1,1]
-        float dist = dot(coord, coord);         // distance^2 from center
-
-        float alpha = 1.0 - smoothstep(0.9, 1.0, dist);
-
-        if(dist > 1.0)
-            discard; // outside circle
-
-        color = vec4(1.0, 1.0, 1.0, 1.0);
-    }
-)";
-
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vs, nullptr);
-    glCompileShader(vertexShader);
-
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fs, nullptr);
-    glCompileShader(fragmentShader);
-
-    shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
     glVertexAttribPointer(
         0,
         2,
@@ -415,6 +406,11 @@ void initShaderStuff()
         (void*)0
     );
     glEnableVertexAttribArray(0);
+
+    // Just empty VAO for the density renderer
+    glGenVertexArrays(1, &emptyVao);
+
+    glBindVertexArray(0); 
 
 }
 void initialize()
@@ -631,20 +627,6 @@ void initialize()
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ///////////////////////////////////////////////////////////////////////////////
 
 void display()
@@ -696,24 +678,37 @@ void display()
         
     }
 
-
-
-
     auto t1 = chrono::high_resolution_clock::now();
 
     simulationMs = chrono::duration<float, milli>(t1 - t0).count();
 
-
-
-    // Upload to GPU
+    // Render
     
-    
+    if (renderMode == RenderMode::Particles)
+    {
+        glUseProgram(particleRender);
+        glBindVertexArray(vao);
+        glDrawArrays(GL_POINTS, 0, n_particles);
+    }
+    else
+    {
+        glUseProgram(densityRender);
+        glUniform1ui(glGetUniformLocation(densityRender, "particleCount"), n_particles);
+        glUniform1ui(glGetUniformLocation(densityRender, "gridWidth"), gridWidth);
+        glUniform1ui(glGetUniformLocation(densityRender, "gridHeight"), gridHeight);
+        glUniform1ui(glGetUniformLocation(densityRender, "MAX_PARTICLES_PER_CELL"), MAX_PARTICLES_PER_CELL);
+        glUniform1f(glGetUniformLocation(densityRender, "smoothRadius"), smoothRadius);
+        glUniform1f(glGetUniformLocation(densityRender, "kernelVolume"), kernelVolume);
+        glUniform2f(glGetUniformLocation(densityRender, "worldMin"), worldMinX, worldMinY);
+        glUniform2f(glGetUniformLocation(densityRender, "worldMax"), worldMaxX, worldMaxY);
+        glUniform1f(glGetUniformLocation(densityRender, "targetDensity"), targetDensity);
+        glUniform1f(glGetUniformLocation(densityRender, "windowWidth"), float(windowWidth));
+        glUniform1f(glGetUniformLocation(densityRender, "windowHeight"), float(windowHeight));
+        glUniform1f(glGetUniformLocation(densityRender, "densityColorScaling"), densityColorScaling);
 
-    glUseProgram(shaderProgram);
-    glBindVertexArray(vao);
-
-    
-    glDrawArrays(GL_POINTS, 0, n_particles);
+        glBindVertexArray(emptyVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
 
     
 }
@@ -759,7 +754,7 @@ bool handleEvents()
 
 
 
-void rebuildGrid()
+void rebuildGrid() // Needs to run when smooth radius changes
 {
     gridWidth = uint(ceil((worldMaxX - worldMinX) / smoothRadius)) + 1;
     gridHeight = uint(ceil((worldMaxY - worldMinY) / smoothRadius)) + 1;
@@ -847,6 +842,16 @@ void gui()
         runForcesShader();
     }
 
+    // Renderer
+    if (ImGui::RadioButton("Particles", renderMode == RenderMode::Particles))
+        renderMode = RenderMode::Particles;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Density", renderMode == RenderMode::Density))
+        renderMode = RenderMode::Density;
+
+    if (renderMode == RenderMode::Density)
+        ImGui::SliderFloat("Density Color Scale", &densityColorScaling, 1.0f, 100.0f);
+    
     
 
     labhelper::perf::drawEventsWindow();
@@ -875,7 +880,7 @@ int main(int argc, char* argv[])
         // Inform imgui of new frame
         labhelper::newFrame(g_window);
 
-        // render to window
+        // render to window (also runs calculations now, bad name i know...)
         display();
 
         // Render overlay GUI.

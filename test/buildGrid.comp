@@ -40,7 +40,7 @@ uniform uint MAX_PARTICLES_PER_CELL;
 uniform vec2 worldMin;  
 uniform vec2 worldMax;  
 
-ivec2 PositionToCellCoord(vec2 point)
+ivec2 PositionToCellCoord(vec2 point) // determines what cell the particle is in
 {
     vec2 shifted = point - worldMin;
     return ivec2(floor(shifted / smoothRadius));
@@ -53,30 +53,25 @@ void main()
     if(id >= particleCount)
         return;
 
-    ivec2 cell =
-        PositionToCellCoord(predPos[id]);
+    ivec2 cell = PositionToCellCoord(predPos[id]);
 
     if(cell.x < 0 || cell.y < 0)
         return;
 
-    if(cell.x >= int(gridWidth) ||
-       cell.y >= int(gridHeight))
+    if(cell.x >= int(gridWidth) || cell.y >= int(gridHeight))
         return;
 
-    uint key =
-        uint(cell.x + cell.y * int(gridWidth));
+    uint key = uint(cell.x + cell.y * int(gridWidth));
 
-    uint offset =
-        atomicAdd(cellCounts[key], 1);
+    uint offset = atomicAdd(cellCounts[key], 1); // one more particle in cell
 
-    if(offset >= MAX_PARTICLES_PER_CELL)
+    if(offset >= MAX_PARTICLES_PER_CELL) // if there are too many particles in this cell
     {
         atomicAdd(overflowCounter, 1u);
         return;
     }
 
-    uint index =
-        key * MAX_PARTICLES_PER_CELL + offset;
+    uint index = key * MAX_PARTICLES_PER_CELL + offset;
 
-    cellParticles[index] = id;
+    cellParticles[index] = id; //add this particle to this cell (or the span of indices representing this cell)
 }

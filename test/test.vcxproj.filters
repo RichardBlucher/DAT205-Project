@@ -29,21 +29,27 @@
     <None Include="predict.comp">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="buildKeys.comp">
-      <Filter>Resource Files</Filter>
-    </None>
-    <None Include="buildStartIndices.comp">
-      <Filter>Resource Files</Filter>
-    </None>
     <None Include="density2.comp">
       <Filter>Resource Files</Filter>
     </None>
     <None Include="forces2.comp">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="clearGrid.comp" />
-    <None Include="buildGrid.comp" />
-    <None Include="density3.comp" />
-    <None Include="forces3.comp" />
+    <None Include="buildGrid.comp">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="clearGrid.comp">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="density3.comp">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="forces3.comp">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="particles.vert" />
+    <None Include="particles.frag" />
+    <None Include="density.vert" />
+    <None Include="density.frag" />
   </ItemGroup>
 </Project>

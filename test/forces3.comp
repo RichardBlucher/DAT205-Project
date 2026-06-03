@@ -144,7 +144,8 @@ vec2 calculatePressureForce(uint i)
                 vec2  dir           = offset / dist;
                 float slope         = kernelDerivative(smoothRadius, dist);
                 float sharedPressure = (pressures[i] + pressures[j]) * 0.5;
-                if (densities[j] < 0.0001) continue;
+                if (densities[j] < 0.0001) 
+                    continue;
                 force += sharedPressure * dir * slope / densities[j];
             }
         }
@@ -180,7 +181,7 @@ vec2 calculateViscosityForce(uint i)
             {
                 uint j = cellParticles[key * MAX_PARTICLES_PER_CELL + k];
 
-                if (j == i) 
+                if (j == i) // no self interaction in viscosity
                     continue;
 
                 vec2  offset = predPos[j] - pos_i;
@@ -200,7 +201,7 @@ vec2 calculateViscosityForce(uint i)
             }
         }
     }
-    return clamp(viscosityStrength * force, vec2(-9.999), vec2(9.999)); // clamped because of the "bubble" forming bug
+    return clamp(viscosityStrength * force, vec2(-9.999), vec2(9.999)); // clamped because of the "bubble" forming bug (at least it does not cause explosion now)
     //return viscosityStrength * force;
     
 }
